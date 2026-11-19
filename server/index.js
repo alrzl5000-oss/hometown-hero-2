@@ -12,7 +12,8 @@ import express from "express";
 import { ROSTER, LEVEL_CAP, characterStatsAt } from "./data/characters.js";
 import { pickCharacter, gachaRates } from "./data/gacha.js";
 import { promotionCost, exPromotionReady, exPromotionCost, exLevelUpGoldCost, exLevelUpDiaCost } from "./data/promotion.js";
-import { simulateBattle } from "./lib/combat.js";
+import { simulateBattle, simulateGauntlet } from "./lib/combat.js";
+import { buildStagePhases, stageInfo } from "./data/stages.js";
 import { supabase, hasSupabaseConfig, checkDatabaseConnection } from "./db.js";
 
 const app = express();
@@ -202,6 +203,36 @@ app.post("/api/battle/simulate", (req, res) => {
       });
     const result = simulateBattle(buildTeam(teamA), buildTeam(teamB), { timeLimitSeconds: timeLimitSeconds || 60 });
     res.json({ winner: result.winner, endedAt: result.t, hitCount: result.hits.length, hits: result.hits });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 스테이지 — "필드 웨이브 → 보스" 연속전(세븐나이츠 키우기 참고). DB 불필요(characterId+
+// level+rarity로 팀을 직접 지정) — 클리어 판정만 보고, 보상/진행도 저장은 다음 단계.
+// body: { team: [{characterId, level, rarity?}] }
+// ---------------------------------------------------------------------------
+app.get("/api/stages/:stageNumber", (req, res) => {
+  const stageNumber = Number(req.params.stageNumber);
+  if (!Number.isInteger(stageNumber) || stageNumber < 1) return res.status(400).json({ error: "stageNumber는 1 이상의 정수여야 함" });
+  res.json(stageInfo(stageNumber));
+});
+
+app.post("/api/stages/:stageNumber/challenge", (req, res) => {
+  const stageNumber = Number(req.params.stageNumber);
+  const { team, timeLimitSeconds } = req.body || {};
+  if (!Number.isInteger(stageNumber) || stageNumber < 1) return res.status(400).json({ error: "stageNumber는 1 이상의 정수여야 함" });
+  if (!Array.isArray(team) || !team.length) return res.status(400).json({ error: "team은 1명 이상의 {characterId, level, rarity?} 배열이어야 함" });
+  try {
+    const playerTeam = team.map(({ characterId, level, rarity }) => {
+      const entry = findRosterEntry(characterId);
+      if (!entry) throw new Error(`unknown characterId: ${characterId}`);
+      return characterStatsAt(characterId, level || LEVEL_CAP[entry.rarity], rarity);
+    });
+    const phases = buildStagePhases(stageNumber);
+    const result = simulateGauntlet(playerTeam, phases, { timeLimitSeconds: timeLimitSeconds || 30 });
+    res.json({ stage: stageInfo(stageNumber), cleared: result.cleared, phaseResults: result.phaseResults, endedAt: result.t, hitCount: result.hits.length });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }

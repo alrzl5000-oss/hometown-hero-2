@@ -322,13 +322,12 @@ function resolveAttack(attacker, mySide, oppSide, t, hits) {
 
 // ---------------------------------------------------------------------------
 // 전투 루프 — 양 팀이 소진될 때까지(또는 시간 제한까지) 가장 빠른 nextAt 순서로 진행.
+// simulateBattle(1:1 팀전, PvP 등)과 simulateGauntlet(필드→보스 연속전, 스테이지)이
+// 공통으로 쓰는 핵심 루프라 runBattleLoop로 뽑아놨다 — side 객체(및 그 안의 fighter의
+// nextAt/hp)를 그 자리에서 계속 변형하고, 시작 시각 t를 받아 끝난 시각을 반환한다.
 // ---------------------------------------------------------------------------
-export function simulateBattle(teamA, teamB, { timeLimitSeconds = 60 } = {}) {
-  const sideA = makeSide(teamA);
-  const sideB = makeSide(teamB);
-  const hits = [];
-  let t = 0;
-
+function runBattleLoop(sideA, sideB, startT, timeLimitSeconds, hits) {
+  let t = startT;
   while (t <= timeLimitSeconds) {
     const aliveA = sideA.fighters.filter((f) => f.alive);
     const aliveB = sideB.fighters.filter((f) => f.alive);
@@ -345,10 +344,43 @@ export function simulateBattle(teamA, teamB, { timeLimitSeconds = 60 } = {}) {
     else resolveAttack(next, sideB, sideA, t, hits);
     next.nextAt += next.interval;
   }
+  return t;
+}
+
+export function simulateBattle(teamA, teamB, { timeLimitSeconds = 60 } = {}) {
+  const sideA = makeSide(teamA);
+  const sideB = makeSide(teamB);
+  const hits = [];
+  const t = runBattleLoop(sideA, sideB, 0, timeLimitSeconds, hits);
 
   const aAlive = sideA.fighters.some((f) => f.alive);
   const bAlive = sideB.fighters.some((f) => f.alive);
   return { winner: aAlive && !bAlive ? "A" : bAlive && !aAlive ? "B" : "draw", hits, t, sideA, sideB };
+}
+
+// ---------------------------------------------------------------------------
+// 연속전(gauntlet) — 플레이어 팀 하나가 "phases"(필드 웨이브 → 보스처럼 순서가 있는 적
+// 그룹들)를 하나씩 차례로 상대한다. 이전 판의 체력/버프/게이지가 다음 판으로 그대로
+// 이어진다(=풀피 리셋 없음) — 스테이지의 "필드몹을 치느라 입은 피해가 보스전에도 영향"
+// 느낌을 그대로 살리기 위함. 어느 한 phase에서 플레이어 팀이 전멸하면 그 즉시 중단.
+// ---------------------------------------------------------------------------
+export function simulateGauntlet(playerTeam, enemyPhases, { timeLimitSeconds = 120 } = {}) {
+  const sideA = makeSide(playerTeam);
+  const hits = [];
+  const phaseResults = [];
+  let t = 0;
+
+  for (const phaseHeroes of enemyPhases) {
+    const sideB = makeSide(phaseHeroes);
+    t = runBattleLoop(sideA, sideB, t, timeLimitSeconds, hits);
+    const aAlive = sideA.fighters.some((f) => f.alive);
+    const bAlive = sideB.fighters.some((f) => f.alive);
+    phaseResults.push({ cleared: aAlive && !bAlive, t, survivorsA: sideA.fighters.filter((f) => f.alive).length });
+    if (!aAlive || t > timeLimitSeconds) break; // 플레이어 전멸 또는 시간 초과 — 다음 phase 진행 안 함
+  }
+
+  const allCleared = phaseResults.length === enemyPhases.length && phaseResults.every((p) => p.cleared);
+  return { cleared: allCleared, phaseResults, hits, t, sideA };
 }
 
 export { upsertBuff, stackMultiplicative, stackAdditive, additiveMult };

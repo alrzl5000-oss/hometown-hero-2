@@ -70,3 +70,58 @@ export function exLevelUpGoldCost(level) {
 export function exLevelUpDiaCost(level) {
   return Math.floor(40 * Math.pow(level, 1.8));
 }
+
+// ---------------------------------------------------------------------------
+// 비-EX(N~XR) 골드 레벨업 — 1.0의 "골드만으로 레벨업" 메커니즘을 그대로 이식.
+// [1차 추정치 — 실측 필요] exLevelUpGoldCost의 level^1.8 곡선과 같은 모양이지만,
+// 지수를 살짝 낮춰(1.6) "EX보다는 싸게" 설계했다 — EX 프레스티지가 메타 최종
+// 목표인데 그 이전 단계(정상 승급 체인) 레벨업이 더 비싸면 진행 순서가 뒤집히므로,
+// 반드시 EX_LEVEL_UP 곡선보다 낮게 유지해야 한다.
+// ---------------------------------------------------------------------------
+export const LEVEL_UP_GOLD_BASE = { N: 40, R: 90, SR: 220, SSR: 600, XR: 1600, HR: 1600, XXR: 1600, EX: 1600 };
+export const LEVEL_UP_GOLD_EXPONENT = 1.6;
+export function baseLevelUpGoldCost(rarity, level) {
+  const base = LEVEL_UP_GOLD_BASE[rarity] ?? LEVEL_UP_GOLD_BASE.N;
+  return Math.max(1, Math.floor(base * Math.pow(Math.max(1, level), LEVEL_UP_GOLD_EXPONENT)));
+}
+
+// ---------------------------------------------------------------------------
+// EX 스타(5성 합성) — EX 프레스티지 승급 이후의 "진짜 최종 성장" 단계. 1.0은 EX
+// 승급 때 넘치는 조각을 계정 공용 "버려진 조각"(discarded_shards)으로 전환해뒀다가,
+// 승급석과 함께 소모해 캐릭터별로 별 1~5성을 올린다(EX_STAR_MAX). 정확한 비용표는
+// 1.0의 characters.js에서 get_page_text 50,000자 제한에 걸려 원문을 못 읽었으므로
+// [1차 추정치 — 실측 필요], EX_PROMOTE_COST(태초 등급별 차등)와 같은 비례를 유지해
+// 새로 설계했다 — 태초 등급이 낮을수록(=버려진 조각 수급이 더 쉬운) 별 1개당 더 많은
+// 조각을, 승급석은 별이 오를수록 더 많이 요구한다.
+// ---------------------------------------------------------------------------
+export const EX_STAR_MAX = 5;
+export const EX_STAR_STAT_BONUS_PER_STAR = 0.05; // 별 1개당 전투 스탯(atk/hp/def) +5%
+
+const EX_STAR_SHARD_BASE = { N: 60, R: 55, SR: 45, SSR: 30, XR: 15 };
+export function exStarUpCost(star, originRarity) {
+  if (star < 1 || star > EX_STAR_MAX) return null;
+  const shardBase = EX_STAR_SHARD_BASE[originRarity] ?? EX_STAR_SHARD_BASE.N;
+  return {
+    star,
+    shard: Math.round(shardBase * Math.pow(1.6, star - 1)),
+    stone: star, // 1성→1개, 5성→5개
+    originRarity,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 승급석 제작 — "버려진 조각"을 모아 승급석으로 바꾼다(1.0의 craft-promotion-stone).
+// 재료는 항상 소모(실패해도 조각/골드는 사라짐 — 1.0 설계 그대로), 성공해야 승급석 +1.
+// 태초 등급이 높을수록(조각 자체가 희귀) 적은 조각/높은 성공률로 보정했다.
+// [1차 추정치 — 실측 필요]
+// ---------------------------------------------------------------------------
+export const PROMOTION_STONE_CRAFT_RECIPE = {
+  N: { shard: 30, gold: 50_000, successRate: 0.15 },
+  R: { shard: 25, gold: 100_000, successRate: 0.3 },
+  SR: { shard: 20, gold: 200_000, successRate: 0.5 },
+  SSR: { shard: 15, gold: 400_000, successRate: 0.7 },
+  XR: { shard: 10, gold: 800_000, successRate: 0.9 },
+};
+export function promotionStoneCraftCost(rarity) {
+  return PROMOTION_STONE_CRAFT_RECIPE[rarity] || null;
+}

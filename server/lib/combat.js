@@ -23,6 +23,22 @@
 import { mitigation, applyResistance, manaRegenPerHit, DEFAULT_STATS } from "../data/stats.js";
 
 // ---------------------------------------------------------------------------
+// 원소 상성 — 1.0의 "불>바람>물>불" 순환 상성(기존 게임 lib/combat.js의
+// elementalMultiplier)을 2.0에도 그대로 이식. 두 쪽 다 원소가 있고 서로 다를 때만
+// 적용되며, 상성자가 유리하면 1.25배, 불리하면 0.85배, 같은 원소거나 원소가 없는
+// 쪽(필드 파밍 몹처럼 "원소 없음"을 쓰는 대상)은 1배(무효과) — 1.0 설계와 동일하게
+// "파밍 잡몹은 상성 제외, 보스/PvP는 상성 유지" 구도를 자연히 만든다.
+// ---------------------------------------------------------------------------
+const ELEMENT_ADVANTAGE = { fire: "wind", wind: "water", water: "fire" };
+export const ELEMENT_ADVANTAGE_MULT = 1.25;
+export const ELEMENT_DISADVANTAGE_MULT = 0.85;
+export function elementalMultiplier(attackerElement, defenderElement) {
+  if (!attackerElement || !defenderElement || attackerElement === defenderElement) return 1;
+  if (ELEMENT_ADVANTAGE[attackerElement] === defenderElement) return ELEMENT_ADVANTAGE_MULT;
+  return ELEMENT_DISADVANTAGE_MULT;
+}
+
+// ---------------------------------------------------------------------------
 // 버프/디버프 리스트 — {sourceId, value, until} 목록. sourceId는 호출부가
 // `${characterId}:${skillSlot}` 형태로 넘긴다(기존 게임의 sourceId 버그 교훈).
 // ---------------------------------------------------------------------------
@@ -59,6 +75,7 @@ export function makeFighter(hero) {
     characterId: hero.characterId,
     name: hero.name,
     role: hero.role || hero.class, // typeBonusDmg가 비교하는 역할
+    element: hero.element || null, // 원소 상성(fire>wind>water) — 없으면 상성 계산에서 항상 1배
     atk: stats.atk,
     hp: stats.hp,
     hpMax: stats.hp,
@@ -137,6 +154,7 @@ function dealDamage({ attacker, mySide, target, oppSide, baseDmg, isSkill, t }) 
   dmg *= additiveMult(mySide.atkBuffs, t);
   if (!isSkill) dmg *= additiveMult(mySide.normalAtkBuffs, t) * attacker.normalDmgMult;
   dmg *= typeBonusMultFor(attacker, target);
+  dmg *= elementalMultiplier(attacker.element, target.element);
   const defDebuffMult = stackMultiplicative(oppSide.defDebuffs, t, -1); // 방깍이 방어력을 깎음
   const effDef = target.def * defDebuffMult;
   dmg *= mitigation(effDef, attacker.pen);

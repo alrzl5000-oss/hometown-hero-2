@@ -1,5 +1,5 @@
 import { nextRarity, promotionCost, exPromotionReady, exPromotionCost, exLevelUpGoldCost, EX_PROMOTE_COST, RARITY_CHAIN } from "../server/data/promotion.js";
-import { pickCharacter, gachaRates, CHARS_BY_RARITY, MAIN_POOL_WEIGHTS } from "../server/data/gacha.js";
+import { pickCharacter, gachaRates, CHARS_BY_RARITY, ssrWeightForLevel, xrWeightForLevel, hiddenHeroChanceForLevel, xxrChanceForLevel, XXR_MIN_LEVEL, HARD_PITY } from "../server/data/gacha.js";
 import { characterStatsAt, ROSTER } from "../server/data/characters.js";
 
 console.log("=== 1. 승급 체인 — N→R→SR→SSR→XR, XR 이후는 null ===");
@@ -44,7 +44,36 @@ const observedNPct = (sampleCounts.N / SAMPLE) * 100;
 const expectedNPct = gachaRates().N;
 console.assert(Math.abs(observedNPct - expectedNPct) < 5, `N등급 실측(${observedNPct.toFixed(1)}%)이 설계값(${expectedNPct.toFixed(1)}%)과 비슷해야 함`);
 
-console.log("\n=== 6. 승급이 실제 전투 스탯에 반영되는지 (N 캐릭터를 SSR로 승급시켰다고 가정) ===");
+console.log("\n=== 6. 계정 레벨에 따라 가챠 확률이 오르는지(민수님 지적 — 복구 확인) ===");
+console.log({
+  ssrAtLv1: ssrWeightForLevel(1), ssrAtLv100: ssrWeightForLevel(100),
+  xrAtLv1: xrWeightForLevel(1), xrAtLv100: xrWeightForLevel(100),
+  hrAtLv1: hiddenHeroChanceForLevel(1), hrAtLv100: hiddenHeroChanceForLevel(100),
+  xxrAtLv49: xxrChanceForLevel(49), xxrAtLv50: xxrChanceForLevel(50), xxrAtLv100: xxrChanceForLevel(100),
+});
+console.assert(ssrWeightForLevel(1) < 0.001 && ssrWeightForLevel(100) > 1, "SSR 확률은 레벨 1에서 거의 0, 레벨 100에서 1%대까지 올라야 함");
+console.assert(ssrWeightForLevel(100) > ssrWeightForLevel(50) && ssrWeightForLevel(50) > ssrWeightForLevel(1), "SSR 확률은 레벨에 비례해 단조증가해야 함");
+console.assert(xrWeightForLevel(1) < xrWeightForLevel(100), "XR 확률도 레벨에 비례해 올라야 함");
+console.assert(hiddenHeroChanceForLevel(1) < hiddenHeroChanceForLevel(100), "HR 확률도 레벨에 비례해 올라야 함");
+console.assert(xxrChanceForLevel(XXR_MIN_LEVEL - 1) === 0, `XXR은 ${XXR_MIN_LEVEL}레벨 미만에서는 절대 등장하지 않아야 함`);
+console.assert(xxrChanceForLevel(XXR_MIN_LEVEL) === 0 && xxrChanceForLevel(100) > 0, "XXR은 50레벨에서 0으로 시작해 100레벨까지 서서히 오름");
+
+console.log("\n=== 7. 가챠 천장(하드 핏티) — HARD_PITY회 안에 SSR이 강제 확정되는지 ===");
+let pity = 0;
+let gotSsrOrAbove = false;
+for (let i = 0; i < HARD_PITY; i++) {
+  const r = pickCharacter({ level: 1, pity });
+  pity = r.pity;
+  if (["SSR", "XR", "HR", "XXR"].includes(r.rarity)) { gotSsrOrAbove = true; break; }
+}
+console.assert(gotSsrOrAbove, `레벨 1이어도 ${HARD_PITY}회 안에는 반드시 SSR 이상이 나와야 함(천장)`);
+
+console.log("\n=== 8. 승급석은 레벨 100 미만에서는 가챠로 드랍되지 않는지 ===");
+let stoneGainedBelow100 = 0;
+for (let i = 0; i < 5000; i++) stoneGainedBelow100 += pickCharacter({ level: 50, pity: 0 }).stoneGain;
+console.assert(stoneGainedBelow100 === 0, "레벨 100 미만에서는 가챠 승급석 드랍이 전혀 없어야 함");
+
+console.log("\n=== 9. 승급이 실제 전투 스탯에 반영되는지 (N 캐릭터를 SSR로 승급시켰다고 가정) ===");
 const sample = ROSTER.find((c) => c.rarity === "N");
 const atOrigin = characterStatsAt(sample.id, 15); // currentRarity 생략 -> 태초 등급(N) 그대로
 const atPromoted = characterStatsAt(sample.id, 15, "SSR"); // 승급 후(현재 등급 SSR로 덮어씀)

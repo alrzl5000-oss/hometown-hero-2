@@ -83,6 +83,10 @@ export function makeFighter(hero) {
     // [오디세이 "키클롭스" 테마용] 이 대상에게는 평타(비스킬 공격)가 전혀 통하지 않는다 —
     // 기존 게임의 zeroNormal 기믹을 그대로 이식(server/data/odyssey.js의 ODYSSEY_THEMES 참고).
     immuneNormal: !!hero.immuneNormal,
+    // [어빌리티 "연격의 리듬" 전용] 평타(비스킬) 피해에만 곱해지는 배율 — 스킬 피해에는
+    // 영향 없음(스킬 쪽은 applyAbilityBonuses가 burstMult에 직접 곱해서 반영한다).
+    // server/data/abilities.js 참고.
+    normalDmgMult: hero.normalDmgMult || 1,
   };
 }
 
@@ -131,7 +135,7 @@ function dealDamage({ attacker, mySide, target, oppSide, baseDmg, isSkill, t }) 
   if (!isSkill && target.immuneNormal) return applyDamageToFighter(target, oppSide, 0, t);
   let dmg = baseDmg;
   dmg *= additiveMult(mySide.atkBuffs, t);
-  if (!isSkill) dmg *= additiveMult(mySide.normalAtkBuffs, t);
+  if (!isSkill) dmg *= additiveMult(mySide.normalAtkBuffs, t) * attacker.normalDmgMult;
   dmg *= typeBonusMultFor(attacker, target);
   const defDebuffMult = stackMultiplicative(oppSide.defDebuffs, t, -1); // 방깍이 방어력을 깎음
   const effDef = target.def * defDebuffMult;

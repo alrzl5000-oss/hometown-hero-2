@@ -79,7 +79,7 @@ export const CLASSES = {
     mana: 120, // 버프/디버프를 자주 걸 수 있도록 가장 빠름
     pen: 0,
     res: 0.3,
-    primaryKind: "buffAtk",
+    primaryKind: "heal", // 서포터 = 힐러. buffAtk는 보조 스킬 풀로 내려서 다양성으로 유지.
   },
 };
 
@@ -89,7 +89,7 @@ const PRIMARY_SKILL_BASE = {
   dealer: { kind: "burst", burstMult: 2.4, manaCostBase: 45 },
   ranged: { kind: "burst", burstMult: 3.0, manaCostBase: 45 },
   assassin: { kind: "burst", burstMult: 9.0, manaCostBase: 55 },
-  support: { kind: "buffAtk", buffBonus: 0.45, buffDuration: 5, manaCostBase: 40 },
+  support: { kind: "heal", healMult: 1.3, manaCostBase: 40 },
 };
 
 // ---------------------------------------------------------------------------
@@ -198,6 +198,7 @@ export const SECONDARY_SKILL_TEMPLATES = {
     { key: "assassin_manaburn", skillName: "숨통 조르기", skill: { kind: "manaBurn", burnAmount: 30, manaCostBase: 25 } },
   ],
   support: [
+    { key: "support_buffatk", skillName: "사기 고양", skill: { kind: "buffAtk", buffBonus: 0.4, buffDuration: 5, manaCostBase: 40 } },
     { key: "support_buffcrit", skillName: "통찰의 기도", skill: { kind: "buffCrit", buffBonus: 0.25, buffDuration: 5, manaCostBase: 25 } },
     { key: "support_cooldown", skillName: "가속의 축복", skill: { kind: "cooldownReduce", manaRegenBonus: 0.3, buffDuration: 5, manaCostBase: 35 } },
     { key: "support_dispel", skillName: "정화의 빛", skill: { kind: "dispel", manaCostBase: 50 } },
@@ -213,6 +214,7 @@ export const SECONDARY_SKILL_TEMPLATES = {
 const CAP_FIELD_BY_KIND = { buffDef: { field: "buffReduction", cap: 0.6 }, debuffDef: { field: "reduction", cap: 0.35 } };
 const SCALE_FIELD_BY_KIND = {
   burst: "burstMult",
+  heal: "healMult",
   buffAtk: "buffBonus",
   buffCrit: "buffBonus",
   buffCritDmg: "buffBonus",
@@ -274,6 +276,9 @@ export function skillsForCharacter(characterId, cls, rarity) {
   if (primaryBase.kind === "buffAtk") {
     primarySkill.buffBonus = scaleMagnitude("buffAtk", primaryBase.buffBonus, rarityMult, powerRatio, jitter1);
     primarySkill.buffDuration = primaryBase.buffDuration;
+  }
+  if (primaryBase.kind === "heal") {
+    primarySkill.healMult = scaleMagnitude("heal", primaryBase.healMult, rarityMult, powerRatio, jitter1);
   }
 
   // 5-2. 보조 스킬 — characterId 해시로 풀에서 하나 결정론적으로 선택.

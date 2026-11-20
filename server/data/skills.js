@@ -48,6 +48,13 @@ export const SKILL_KINDS = {
   },
 
   // ---- 기존 게임에서 이식 (버프/디버프) ----
+  heal: {
+    category: SKILL_CATEGORY.BUFF,
+    label: "치유",
+    desc: "아군 중 체력 비율이 가장 낮은 대상을 공격력 비례로 회복시킨다(초과분은 버림).",
+    params: ["healMult"],
+    manaCostHint: [30, 55],
+  },
   buffAtk: { category: SKILL_CATEGORY.BUFF, label: "공격력 버프", params: ["buffBonus", "buffDuration"], manaCostHint: [25, 45] },
   buffDef: { category: SKILL_CATEGORY.BUFF, label: "방어 버프", params: ["buffReduction", "buffDuration"], manaCostHint: [25, 45] },
   buffSpd: { category: SKILL_CATEGORY.BUFF, label: "공속 버프", params: ["buffBonus", "buffDuration"], manaCostHint: [25, 45] },

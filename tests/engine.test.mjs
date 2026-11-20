@@ -128,4 +128,21 @@ console.log({ winner: execResult.winner, executed, victimDefWasHuge: 999999 });
 console.assert(executed, "처형은 방어력과 무관하게 발동해야 함(방어력 999999여도 즉사)");
 console.assert(execResult.winner === "A", "처형이 제대로 들어갔다면 A가 즉시 이겨야 함");
 
+console.log("\n=== 11. heal — 체력이 가장 낮은 아군을 회복시키고, hpMax를 넘지 않는지 ===");
+// resolveAttack은 비공개 함수라 simulateBattle로 우회 — 코스트 1이라 거의 즉시 발동.
+const healResult = simulateBattle(
+  [
+    { characterId: "healer2", class: "support", atk: 1000, hp: 2000, def: 100, mana: 10000, spd: 1, skills: [{ kind: "heal", healMult: 1.0, manaCost: 1 }] },
+    { characterId: "ally3", class: "tanker", atk: 10, hp: 2000, def: 100, mana: 0, spd: 1 }, // 전투 중 평타를 맞아 체력이 깎인다
+  ],
+  [{ characterId: "foe1", class: "ranged", atk: 300, hp: 99999999, def: 0, mana: 0, spd: 1 }],
+  { timeLimitSeconds: 10 },
+);
+const healLog = healResult.hits.filter((h) => h.skillKind === "heal");
+console.log({ healFires: healLog.length, sample: healLog.slice(0, 3) });
+console.assert(healLog.length > 0, "heal 스킬이 실제로 발동해야 함");
+console.assert(healLog.some((h) => h.heal > 0), "실제로 회복량이 0보다 커야 함(아군이 덜 깎여 있으면 과잉회복은 0일 수 있어 some으로 확인)");
+const allyFighter = healResult.sideA.fighters.find((f) => f.characterId === "ally3");
+console.assert(allyFighter.hp <= allyFighter.hpMax, "회복이 hpMax를 넘으면 안 됨");
+
 console.log("\n모든 검증 통과 (assert 실패 시 위에 에러가 떴을 것).");

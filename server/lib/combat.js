@@ -80,6 +80,9 @@ export function makeFighter(hero) {
     manaLockedUntil: 0,
     forceTargetId: null,
     forceTargetUntil: 0,
+    // [오디세이 "키클롭스" 테마용] 이 대상에게는 평타(비스킬 공격)가 전혀 통하지 않는다 —
+    // 기존 게임의 zeroNormal 기믹을 그대로 이식(server/data/odyssey.js의 ODYSSEY_THEMES 참고).
+    immuneNormal: !!hero.immuneNormal,
   };
 }
 
@@ -96,6 +99,10 @@ export function makeSide(heroes) {
     defDebuffs: [],
     reviveCharged: false,
     reviveUsed: false,
+    // [오디세이 "키르케" 테마용] 이 사이드에서 heal 스킬이 발동할 때마다, 원래 효과(아군
+    // 회복)는 그대로 적용하면서 "실제로 회복된 양만큼" 상대에게 고정 피해도 추가로 들어간다
+    // — 기존 게임의 healAsDamage 기믹(서포터의 치유가 피해로 전환)을 그대로 이식.
+    healAsDamage: false,
   };
 }
 
@@ -119,6 +126,9 @@ function typeBonusMultFor(attacker, target) {
 }
 
 function dealDamage({ attacker, mySide, target, oppSide, baseDmg, isSkill, t }) {
+  // [오디세이 "키클롭스" 테마] 평타는 이 대상에게 전혀 통하지 않는다 — mitigation 계산 전에
+  // 바로 0으로 끊는다(스킬 피해는 영향 없음).
+  if (!isSkill && target.immuneNormal) return applyDamageToFighter(target, oppSide, 0, t);
   let dmg = baseDmg;
   dmg *= additiveMult(mySide.atkBuffs, t);
   if (!isSkill) dmg *= additiveMult(mySide.normalAtkBuffs, t);
@@ -128,6 +138,9 @@ function dealDamage({ attacker, mySide, target, oppSide, baseDmg, isSkill, t }) 
   dmg *= mitigation(effDef, attacker.pen);
   return applyDamageToFighter(target, oppSide, dmg, t);
 }
+
+// [오디세이 "키르케" 테마 전용] heal 스킬이 실제로 회복시킨 양을 그대로(1:1) 상대에게
+// 고정 피해로 전환한다 — 기존 게임의 "치유량만큼 보스에게 피해" 기믹 그대로.
 
 // 피해를 실제로 때려박는 지점 — 횟수제 보호막(shieldHits)과 시한부 불사(tempImmortal)를
 // 여기서 함께 처리한다. 반환값: 실제로 들어간 피해량(보호막 무효화면 0).
@@ -174,6 +187,14 @@ function buffSourceId(fighter, skill) {
   return `${fighter.characterId}:${skill.slot}`;
 }
 
+// heal의 대상 선택 — 체력 "비율"이 가장 낮은 생존 아군(죽은 아군은 revive가 처리할 몫이라
+// 제외한다).
+function pickHealTarget(side) {
+  const alive = side.fighters.filter((f) => f.alive);
+  if (!alive.length) return null;
+  return alive.reduce((lowest, f) => (f.hp / f.hpMax < lowest.hp / lowest.hpMax ? f : lowest));
+}
+
 function passesRes(target, baseChance) {
   return Math.random() < applyResistance(baseChance, target.res);
 }
@@ -183,6 +204,14 @@ function passesRes(target, baseChance) {
 // 직접 처리) — server/data/skills.js의 카탈로그와 1:1 대응.
 // ---------------------------------------------------------------------------
 const SKILL_HANDLERS = {
+  // 반환값(실제 회복량)은 resolveAttack에서 로그/오디세이 키르케 기믹에 쓴다.
+  heal: (ctx) => {
+    const healTarget = pickHealTarget(ctx.mySide);
+    if (!healTarget) return 0;
+    const before = healTarget.hp;
+    healTarget.hp = Math.min(healTarget.hpMax, healTarget.hp + ctx.attacker.atk * ctx.skill.healMult);
+    return healTarget.hp - before;
+  },
   buffAtk: (ctx) => upsertBuff(ctx.mySide.atkBuffs, ctx.sourceId, ctx.skill.buffBonus, ctx.t + ctx.skill.buffDuration),
   buffDef: (ctx) => upsertBuff(ctx.mySide.defBuffs, ctx.sourceId, ctx.skill.buffReduction, ctx.t + ctx.skill.buffDuration),
   buffSpd: (ctx) => upsertBuff(ctx.mySide.spdBuffs, ctx.sourceId, ctx.skill.buffBonus, ctx.t + ctx.skill.buffDuration),
@@ -313,8 +342,18 @@ function resolveAttack(attacker, mySide, oppSide, t, hits) {
       castDamageSkill(attacker, mySide, target, oppSide, skill, t, hits);
     } else {
       const handler = SKILL_HANDLERS[skill.kind];
-      if (handler) handler(ctx);
-      hits.push({ t, actor: attacker.characterId, isSkill: true, skillKind: skill.kind, dmg: 0 });
+      const handlerResult = handler ? handler(ctx) : undefined;
+      let convertedDmg = 0;
+      // [오디세이 "키르케" 테마] 이 사이드가 healAsDamage 상태면, 방금 heal로 실제 회복된
+      // 양만큼(1:1) 지금 target(없으면 oppSide 아무나)에게 고정 피해를 추가로 꽂는다.
+      if (skill.kind === "heal" && mySide.healAsDamage && handlerResult > 0) {
+        const dmgTarget = target || pickTarget(attacker, oppSide, t);
+        if (dmgTarget) {
+          convertedDmg = dealDamage({ attacker, mySide, target: dmgTarget, oppSide, baseDmg: handlerResult, isSkill: true, t });
+        }
+      }
+      const healed = skill.kind === "heal" ? Math.round(handlerResult || 0) : undefined;
+      hits.push({ t, actor: attacker.characterId, isSkill: true, skillKind: skill.kind, dmg: Math.round(convertedDmg), ...(healed !== undefined ? { heal: healed } : {}) });
     }
     if (!oppSide.fighters.some((f) => f.alive)) break; // 상대가 전멸했으면 나머지 스킬은 의미 없음
   }
@@ -381,6 +420,23 @@ export function simulateGauntlet(playerTeam, enemyPhases, { timeLimitSeconds = 1
 
   const allCleared = phaseResults.length === enemyPhases.length && phaseResults.every((p) => p.cleared);
   return { cleared: allCleared, phaseResults, hits, t, sideA };
+}
+
+// ---------------------------------------------------------------------------
+// 오디세이 전용 1:1 전투 — simulateBattle과 거의 같지만, 적(enemy) 객체에 실어둔
+// zeroNormal/healAsDamage 플래그를 각각 target.immuneNormal / sideA.healAsDamage로
+// 연결해준다(server/data/odyssey.js의 ODYSSEY_THEMES 기믹). 그 외 승패 판정/시간 제한
+// 로직은 simulateBattle과 동일하다.
+export function simulateOdysseyFight(team, enemy, { timeLimitSeconds = 30 } = {}) {
+  const sideA = makeSide(team);
+  sideA.healAsDamage = !!enemy.healAsDamage;
+  const sideB = makeSide([{ ...enemy, immuneNormal: !!enemy.zeroNormal }]);
+  const hits = [];
+  const t = runBattleLoop(sideA, sideB, 0, timeLimitSeconds, hits);
+  const aAlive = sideA.fighters.some((f) => f.alive);
+  const bAlive = sideB.fighters.some((f) => f.alive);
+  const timedOut = t >= timeLimitSeconds && bAlive;
+  return { winner: aAlive && !bAlive ? "A" : bAlive && !aAlive ? "B" : "draw", win: aAlive && !bAlive, timedOut, hits, t, sideA, sideB };
 }
 
 export { upsertBuff, stackMultiplicative, stackAdditive, additiveMult };

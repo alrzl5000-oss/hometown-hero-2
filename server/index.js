@@ -39,12 +39,16 @@ import {
   themeForStage, odysseyEnemy, equippedOdysseyBonusSums, applyOdysseyEquipmentBonuses, resolveOdysseyFight,
 } from "./data/odyssey.js";
 import { supabase, hasSupabaseConfig, checkDatabaseConnection } from "./db.js";
+import { GACHA_BUNDLES, GACHA_BUNDLE_SIZES, pullBundle, aggregatePulls, planBundleApplication } from "./data/gachaBundle.js";
+import { normalizeAbilityPresets, abilityLinesForContent, ABILITY_CONTENT_KEYS, ABILITY_CONTENT_LABELS, PRESET_SLOTS } from "./data/presets.js";
+import { registerFeatureRoutes, makePlayerContext } from "./features.js";
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 8080;
 const DIA_PER_PULL = 300; // [임시값] 실제 재화 밸런스는 아직 확정 전 — 추후 조정 필요
+const playerCtx = makePlayerContext({ supabase });
 
 function findRosterEntry(characterId) {
   return ROSTER.find((c) => c.id === characterId);
@@ -204,61 +208,77 @@ app.get("/api/players/:playerId", async (req, res) => {
   res.json({ currency, characters });
 });
 
-// 가챠 1회 뽑기 — 다이아 차감, 처음 보유하는 캐릭터면 태초/현재 등급을 뽑힌 등급으로
-// 새로 만들고, 이미 보유 중이면 조각(shard_count)만 +1.
-// [수정 — 2026-11-20] players.level/pity_count를 읽어 pickCharacter({level,pity})에 넘기고,
-// 갱신된 pity를 다시 저장. stoneGain은 player_currencies.stone에 적립(승급석 가챠 드랍).
+// 가챠 뽑기 — body: { size: 1 | 10 | 100 | 1000 } (생략 시 1). server/data/gachaBundle.js 참고.
+// 10연 SR 이상 1개 확정 / 100연 SR 이상 10개 확정 / 1000연은 순수 확률(1.0 그대로).
+// 처음 보유하는 캐릭터는 새 행, 이미 보유 중이면 조각 +n, 이미 EX면 계정 공용 "버려진 조각"으로 환전.
+// 천장(pity)은 1회씩 뽑은 것과 똑같이 이어지고, 승급석 드랍(stoneGain)은 currency.stone에 적립.
+app.get("/api/gacha/bundles", (req, res) => res.json({ bundles: GACHA_BUNDLES, sizes: GACHA_BUNDLE_SIZES }));
+
 app.post("/api/players/:playerId/gacha/pull", async (req, res) => {
   if (!requireDb(res)) return;
   const { playerId } = req.params;
-  const [{ data: currency, error: currErr }, { data: player, error: playerErr }] = await Promise.all([
-    supabase.from("player_currencies").select("*").eq("player_id", playerId).single(),
-    supabase.from("players").select("level, pity_count").eq("id", playerId).single(),
-  ]);
-  if (currErr) return res.status(404).json({ error: "플레이어 없음" });
-  if (playerErr) return res.status(404).json({ error: "플레이어 없음" });
-  if (currency.dia < DIA_PER_PULL) return res.status(400).json({ error: "다이아 부족" });
+  const size = Number((req.body || {}).size || 1);
+  if (!GACHA_BUNDLES[size]) return res.status(400).json({ error: `size는 ${GACHA_BUNDLE_SIZES.join("/")} 중 하나` });
+  try {
+    const [{ data: currency, error: currErr }, { data: player, error: playerErr }, { data: ownedRows, error: ownedErr }] = await Promise.all([
+      supabase.from("player_currencies").select("*").eq("player_id", playerId).single(),
+      supabase.from("players").select("level, pity_count").eq("id", playerId).single(),
+      supabase.from("player_characters").select("*").eq("player_id", playerId),
+    ]);
+    if (currErr || playerErr) return res.status(404).json({ error: "플레이어 없음" });
+    if (ownedErr) throw new Error(ownedErr.message);
+    const cost = GACHA_BUNDLES[size].cost;
+    if (currency.dia < cost) return res.status(400).json({ error: `다이아 부족 (${currency.dia}/${cost})` });
 
-  const { character, rarity, pool, pity, stoneGain } = pickCharacter({ level: player.level, pity: player.pity_count });
-  const { data: existing } = await supabase
-    .from("player_characters")
-    .select("*")
-    .eq("player_id", playerId)
-    .eq("character_id", character.id)
-    .maybeSingle();
+    const bundle = pullBundle({ level: player.level, pity: player.pity_count, size });
+    const agg = aggregatePulls(bundle.pulls);
+    const existingById = new Map((ownedRows || []).map((r) => [r.character_id, r]));
+    const plan = planBundleApplication(agg, existingById);
 
-  let discardedShardsGained = 0;
-  if (existing) {
-    // 이미 EX까지 승급한 캐릭터는 정상 조각 풀이 더 필요 없으므로(EX 승급 이후의 성장은
-    // EX 스타/버려진 조각 경로로 넘어감), 중복 조각을 shard_count에 쌓지 않고 계정 공용
-    // "버려진 조각"(discarded_shards, 태초 등급별 키)으로 바로 환전한다 — 1.0 설계 그대로.
-    if (existing.current_rarity === "EX") {
-      discardedShardsGained = 1;
-      await addDiscardedShards(playerId, currency, existing.origin_rarity, 1);
-    } else {
-      await supabase
-        .from("player_characters")
-        .update({ shard_count: existing.shard_count + 1, updated_at: new Date().toISOString() })
-        .eq("player_id", playerId)
-        .eq("character_id", character.id);
+    // 새 캐릭터 + 조각 증가를 한 번의 upsert로(PK: player_id, character_id).
+    const stamp = new Date().toISOString();
+    const upserts = [
+      ...plan.inserts.map((r) => ({ ...r, player_id: playerId, updated_at: stamp })),
+      ...[...plan.shardAdds].map(([id, n]) => {
+        const row = existingById.get(id);
+        return { player_id: playerId, character_id: id, origin_rarity: row.origin_rarity, current_rarity: row.current_rarity, level: row.level, shard_count: (row.shard_count || 0) + n, updated_at: stamp };
+      }),
+    ];
+    if (upserts.length) {
+      const { error } = await supabase.from("player_characters").upsert(upserts, { onConflict: "player_id,character_id", defaultToNull: false });
+      if (error) throw new Error(error.message);
     }
-  } else {
-    await supabase.from("player_characters").insert({
-      player_id: playerId,
-      character_id: character.id,
-      origin_rarity: rarity,
-      current_rarity: rarity,
-      level: 1,
-    });
-  }
-  await Promise.all([
-    supabase.from("player_currencies")
-      .update({ dia: currency.dia - DIA_PER_PULL, stone: currency.stone + stoneGain, updated_at: new Date().toISOString() })
-      .eq("player_id", playerId),
-    supabase.from("players").update({ pity_count: pity }).eq("id", playerId),
-  ]);
+    const discarded = { ...(currency.discarded_shards || {}) };
+    let discardedShardsGained = 0;
+    for (const [k, n] of Object.entries(plan.discarded)) {
+      discarded[k] = (discarded[k] || 0) + n;
+      discardedShardsGained += n;
+    }
+    await Promise.all([
+      supabase.from("player_currencies").update({
+        dia: currency.dia - cost, stone: currency.stone + bundle.stoneGain, discarded_shards: discarded, updated_at: stamp,
+      }).eq("player_id", playerId),
+      supabase.from("players").update({ pity_count: bundle.pity }).eq("id", playerId),
+    ]);
 
-  res.json({ character, rarity, pool, isNew: !existing, pity, stoneGain, discardedShardsGained });
+    const seenNew = new Set();
+    const pulls = bundle.pulls.map((p) => {
+      const isNew = plan.newIds.has(p.character.id) && !seenNew.has(p.character.id);
+      if (isNew) seenNew.add(p.character.id);
+      return { character: p.character, rarity: p.rarity, pool: p.pool, guaranteed: !!p.guaranteed, isNew };
+    });
+    const summary = {};
+    for (const p of pulls) summary[p.rarity] = (summary[p.rarity] || 0) + 1;
+    const first = pulls[0];
+    // size 1 응답은 기존 필드(character/rarity/pool/isNew)를 그대로 유지(하위 호환).
+    res.json({
+      size, cost, pulls, summary, newCount: plan.newIds.size, pity: bundle.pity, stoneGain: bundle.stoneGain, discardedShardsGained,
+      dia: currency.dia - cost,
+      ...(size === 1 ? { character: first.character, rarity: first.rarity, pool: first.pool, isNew: first.isNew } : {}),
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // 전투/던전/보스 승리 후 계정 경험치 적립 — body: { expGained }. 레벨업 시 레벨당
@@ -298,20 +318,27 @@ app.get("/api/players/:playerId/abilities", async (req, res) => {
   const { playerId } = req.params;
   const { data: player, error } = await supabase
     .from("players")
-    .select("level, ability_lines, ability_locked_indices")
+    .select("level, ability_lines, ability_locked_indices, ability_presets, ability_active_preset, ability_content_presets")
     .eq("id", playerId)
     .single();
   if (error) return res.status(404).json({ error: "플레이어 없음" });
 
   const slots = unlockedSlotCount(player.level);
+  const { presets, active } = normalizeAbilityPresets(player);
   res.json({
     level: player.level,
     unlockedSlots: slots,
     slotUnlockLevels: ABILITY_SLOT_UNLOCK_LEVEL,
-    lines: player.ability_lines || [],
-    lockedIndices: player.ability_locked_indices || [],
-    rerollCost: rerollCostFor(player.ability_locked_indices || [], slots),
+    lines: presets[active].lines,
+    lockedIndices: presets[active].lockedIndices,
+    rerollCost: rerollCostFor(presets[active].lockedIndices, slots),
     gradeProbabilities: gradeProbabilityTable(player.level),
+    presets: presets.map((p) => ({ ...p, rerollCost: rerollCostFor(p.lockedIndices, slots) })),
+    activePreset: active,
+    presetSlots: PRESET_SLOTS,
+    contentPresets: player.ability_content_presets || {},
+    contentKeys: ABILITY_CONTENT_KEYS,
+    contentLabels: ABILITY_CONTENT_LABELS,
   });
 });
 
@@ -319,7 +346,7 @@ app.post("/api/players/:playerId/abilities/reroll", async (req, res) => {
   if (!requireDb(res)) return;
   const { playerId } = req.params;
   const [{ data: player, error: playerErr }, { data: currency, error: currErr }] = await Promise.all([
-    supabase.from("players").select("level, ability_lines, ability_locked_indices").eq("id", playerId).single(),
+    supabase.from("players").select("level, ability_lines, ability_locked_indices, ability_presets, ability_active_preset").eq("id", playerId).single(),
     supabase.from("player_currencies").select("gold").eq("player_id", playerId).single(),
   ]);
   if (playerErr) return res.status(404).json({ error: "플레이어 없음" });
@@ -327,17 +354,20 @@ app.post("/api/players/:playerId/abilities/reroll", async (req, res) => {
 
   const slots = unlockedSlotCount(player.level);
   if (slots <= 0) return res.status(400).json({ error: "아직 해금된 어빌리티 슬롯이 없음(계정 레벨 10부터)" });
-  const lockedIndices = player.ability_locked_indices || [];
+  // 재설정은 "지금 활성 프리셋"에만 — 프리셋마다 따로 재설정(1.0 그대로).
+  const { presets, active } = normalizeAbilityPresets(player);
+  const lockedIndices = presets[active].lockedIndices;
   const cost = rerollCostFor(lockedIndices, slots);
   if (currency.gold < cost) return res.status(400).json({ error: `골드 부족 (${currency.gold}/${cost})` });
 
-  const newLines = rerollAbilityLines(player.ability_lines || [], slots, lockedIndices, player.level);
+  const newLines = rerollAbilityLines(presets[active].lines, slots, lockedIndices, player.level);
+  presets[active] = { ...presets[active], lines: newLines };
   await Promise.all([
-    supabase.from("players").update({ ability_lines: newLines }).eq("id", playerId),
+    supabase.from("players").update({ ability_lines: newLines, ability_presets: presets, ability_active_preset: active }).eq("id", playerId),
     supabase.from("player_currencies").update({ gold: currency.gold - cost, updated_at: new Date().toISOString() }).eq("player_id", playerId),
   ]);
 
-  res.json({ lines: newLines, spent: cost });
+  res.json({ lines: newLines, spent: cost, activePreset: active });
 });
 
 app.post("/api/players/:playerId/abilities/lock", async (req, res) => {
@@ -347,14 +377,17 @@ app.post("/api/players/:playerId/abilities/lock", async (req, res) => {
   if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= ABILITY_SLOT_COUNT) {
     return res.status(400).json({ error: `slotIndex는 0~${ABILITY_SLOT_COUNT - 1} 사이의 정수여야 함` });
   }
-  const { data: player, error } = await supabase.from("players").select("ability_locked_indices").eq("id", playerId).single();
+  const { data: player, error } = await supabase
+    .from("players").select("ability_lines, ability_locked_indices, ability_presets, ability_active_preset").eq("id", playerId).single();
   if (error) return res.status(404).json({ error: "플레이어 없음" });
 
-  const current = player.ability_locked_indices || [];
+  const { presets, active } = normalizeAbilityPresets(player);
+  const current = presets[active].lockedIndices;
   const nextLocked = current.includes(slotIndex) ? current.filter((i) => i !== slotIndex) : [...current, slotIndex];
-  await supabase.from("players").update({ ability_locked_indices: nextLocked }).eq("id", playerId);
+  presets[active] = { ...presets[active], lockedIndices: nextLocked };
+  await supabase.from("players").update({ ability_locked_indices: nextLocked, ability_presets: presets, ability_active_preset: active }).eq("id", playerId);
 
-  res.json({ lockedIndices: nextLocked });
+  res.json({ lockedIndices: nextLocked, activePreset: active });
 });
 
 // ---------------------------------------------------------------------------
@@ -401,15 +434,13 @@ async function settleFarm(playerId, player, currency) {
   if (farmTeamIds.length === TEAM_SIZE) {
     // EX 별(fetchOwnedCharacterStats가 exStar 포함) + 컬렉션/시너지(보유 전체 목록)까지
     // buildFormedTeam 한 곳에서 적용 — 다른 콘텐츠와 완전히 같은 경로.
-    const [owned, allOwnedRows] = await Promise.all([
+    // 어빌리티는 "파밍" 콘텐츠 프리셋 매핑, 장비는 지금 활성 장비 프리셋(server/features.js).
+    const [owned, allOwnedRows, opts] = await Promise.all([
       fetchOwnedCharacterStats(playerId, farmTeamIds),
       fetchAllOwnedRows(playerId),
+      playerCtx.combatOptionsFor(playerId, player, "farm"),
     ]);
-    team = buildFormedTeam(owned, player.farm_formation || DEFAULT_FORMATION, {
-      abilityLines: player.ability_lines || [],
-      accountLevel: player.level,
-      ownedCharacters: allOwnedRows,
-    });
+    team = buildFormedTeam(owned, player.farm_formation || DEFAULT_FORMATION, { ...opts, ownedCharacters: allOwnedRows });
   }
 
   const now = Date.now();
@@ -545,7 +576,14 @@ app.post("/api/players/:playerId/farm/boss-challenge", async (req, res) => {
 
     const stage = settled.player.farm_stage || 1;
     const maxStage = settled.player.farm_max_stage || 1;
-    const result = resolveBossChallenge({ team: settled.team, stage, maxStage });
+    // 층보스는 "층보스" 콘텐츠 프리셋으로 다시 조립(매핑이 없으면 파밍 팀과 동일한 결과).
+    const [ownedBoss, allOwnedBoss, bossOpts] = await Promise.all([
+      fetchOwnedCharacterStats(playerId, settled.player.farm_team),
+      fetchAllOwnedRows(playerId),
+      playerCtx.combatOptionsFor(playerId, settled.player, "floorBoss"),
+    ]);
+    const bossTeam = buildFormedTeam(ownedBoss, settled.player.farm_formation || DEFAULT_FORMATION, { ...bossOpts, ownedCharacters: allOwnedBoss });
+    const result = resolveBossChallenge({ team: bossTeam, stage, maxStage });
 
     let nextCurrency = settled.currency;
     if (result.win && result.diaBonus > 0) {
@@ -1059,24 +1097,28 @@ app.post("/api/auth/reset", requireAuth, async (req, res) => {
 // "랭크전"(rated)만 시도 횟수 제한+시간 회복, "친선전"(friendly)은 무제한(1.0 최종 설계
 // 그대로) — 레이팅 변동은 랭크전에만 있다.
 // ---------------------------------------------------------------------------
-async function resolvePvpTeam(playerId, teamIds, formation) {
+async function resolvePvpTeam(playerId, teamIds, formation, player) {
   if (!Array.isArray(teamIds) || teamIds.length !== TEAM_SIZE) return null;
-  const [owned, allOwnedRows] = await Promise.all([fetchOwnedCharacterStats(playerId, teamIds), fetchAllOwnedRows(playerId)]);
-  return buildFormedTeam(owned, formation || DEFAULT_FORMATION, { ownedCharacters: allOwnedRows });
+  const [owned, allOwnedRows, opts] = await Promise.all([
+    fetchOwnedCharacterStats(playerId, teamIds),
+    fetchAllOwnedRows(playerId),
+    player ? playerCtx.combatOptionsFor(playerId, player, "pvp") : {},
+  ]);
+  return buildFormedTeam(owned, formation || DEFAULT_FORMATION, { ...opts, ownedCharacters: allOwnedRows });
 }
 // 1.0의 "공격팀 → 수비팀 → 현재 파밍팀" 순서의 대체 해결 체인(전용 팀을 아직 안 짰어도
 // 바로 참여 가능하게) 그대로 이식.
 async function resolveEffectiveAttackTeam(playerId, player) {
-  const attack = await resolvePvpTeam(playerId, player.pvp_attack_team, player.pvp_attack_formation).catch(() => null);
+  const attack = await resolvePvpTeam(playerId, player.pvp_attack_team, player.pvp_attack_formation, player).catch(() => null);
   if (attack) return attack;
-  const defense = await resolvePvpTeam(playerId, player.pvp_defense_team, player.pvp_defense_formation).catch(() => null);
+  const defense = await resolvePvpTeam(playerId, player.pvp_defense_team, player.pvp_defense_formation, player).catch(() => null);
   if (defense) return defense;
-  return resolvePvpTeam(playerId, player.farm_team, player.farm_formation).catch(() => null);
+  return resolvePvpTeam(playerId, player.farm_team, player.farm_formation, player).catch(() => null);
 }
 async function resolveEffectiveDefenseTeam(playerId, player) {
-  const defense = await resolvePvpTeam(playerId, player.pvp_defense_team, player.pvp_defense_formation).catch(() => null);
+  const defense = await resolvePvpTeam(playerId, player.pvp_defense_team, player.pvp_defense_formation, player).catch(() => null);
   if (defense) return defense;
-  return resolvePvpTeam(playerId, player.farm_team, player.farm_formation).catch(() => null);
+  return resolvePvpTeam(playerId, player.farm_team, player.farm_formation, player).catch(() => null);
 }
 
 app.get("/api/players/:playerId/pvp/state", async (req, res) => {
@@ -1269,6 +1311,11 @@ app.get("/api/players/:playerId/pvp/history", async (req, res) => {
     .from("pvp_matches").select("*").eq("defender_id", playerId).order("created_at", { ascending: false }).limit(30);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ matches: data });
+});
+
+// UI에 있는데 서버에 없던 기능들(프리셋/장비 가방/오디세이·던전·일일보스 서버 저장/랭킹/버프).
+registerFeatureRoutes(app, {
+  supabase, requireDb, buildFormedTeam, fetchOwnedCharacterStats, fetchAllOwnedRows, loadPlayerAndCurrency, settleFarm,
 });
 
 app.listen(PORT, () => {

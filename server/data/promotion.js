@@ -97,6 +97,18 @@ export function baseLevelUpGoldCost(rarity, level) {
 export const EX_STAR_MAX = 5;
 export const EX_STAR_STAT_BONUS_PER_STAR = 0.05; // 별 1개당 전투 스탯(atk/hp/def) +5%
 
+// EX 별(1~EX_STAR_MAX성) 전투 스탯 보너스 — 별 1개당 atk/hp/def +EX_STAR_STAT_BONUS_PER_STAR.
+// characterStatsAt은 ex_star를 모르는 순수 함수라, 그 결과 위에 이 헬퍼로 한 번 더 곱한다.
+// 전투 팀 빌드(buildFormedTeam)와 캐릭터 목록 조회(GET /api/players/:playerId) 양쪽이 같은
+// 헬퍼를 써서 "목록에 보이는 스탯 = 실제 전투 스탯"이 되도록 한다.
+export function applyExStarBonus(stats, exStar) {
+  const star = Math.max(0, Math.min(EX_STAR_MAX, Math.floor(Number(exStar) || 0)));
+  if (!stats || star === 0) return stats;
+  const mult = 1 + star * EX_STAR_STAT_BONUS_PER_STAR;
+  return { ...stats, exStar: star, atk: Math.round(stats.atk * mult), hp: Math.round(stats.hp * mult), def: Math.round(stats.def * mult) };
+}
+
+
 const EX_STAR_SHARD_BASE = { N: 60, R: 55, SR: 45, SSR: 30, XR: 15 };
 export function exStarUpCost(star, originRarity) {
   if (star < 1 || star > EX_STAR_MAX) return null;

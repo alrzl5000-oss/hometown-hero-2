@@ -76,6 +76,10 @@ export function makeFighter(hero) {
     name: hero.name,
     role: hero.role || hero.class, // typeBonusDmg가 비교하는 역할
     element: hero.element || null, // 원소 상성(fire>wind>water) — 없으면 상성 계산에서 항상 1배
+    // [일일던전 직업 상성 보스] 이 대상이 특정 직업(role)의 공격에 약하면 그 직업 공격자의
+    // 피해에 weakRoleBonusMult를 곱한다(대상 쪽 특성 — 공격자 쪽 typeBonusDmg 패시브와 별개).
+    weakRole: hero.weakRole || null,
+    weakRoleBonusMult: hero.weakRoleBonusMult || 1,
     atk: stats.atk,
     hp: stats.hp,
     hpMax: stats.hp,
@@ -146,6 +150,13 @@ function typeBonusMultFor(attacker, target) {
   return target.role === passive.targetRole ? passive.bonusMult : 1;
 }
 
+// 대상이 weakRole을 가졌고 공격자의 role이 그 직업이면 보너스 배율(덱빌딩 — "그 던전에 맞는
+// 직업을 데려가는" 재미, claude/game2-stage-system.md 1번 리서치 메모를 구현).
+export function weakRoleMultFor(attacker, target) {
+  if (!target.weakRole || !attacker.role) return 1;
+  return attacker.role === target.weakRole ? target.weakRoleBonusMult || 1 : 1;
+}
+
 function dealDamage({ attacker, mySide, target, oppSide, baseDmg, isSkill, t }) {
   // [오디세이 "키클롭스" 테마] 평타는 이 대상에게 전혀 통하지 않는다 — mitigation 계산 전에
   // 바로 0으로 끊는다(스킬 피해는 영향 없음).
@@ -154,6 +165,7 @@ function dealDamage({ attacker, mySide, target, oppSide, baseDmg, isSkill, t }) 
   dmg *= additiveMult(mySide.atkBuffs, t);
   if (!isSkill) dmg *= additiveMult(mySide.normalAtkBuffs, t) * attacker.normalDmgMult;
   dmg *= typeBonusMultFor(attacker, target);
+  dmg *= weakRoleMultFor(attacker, target);
   dmg *= elementalMultiplier(attacker.element, target.element);
   const defDebuffMult = stackMultiplicative(oppSide.defDebuffs, t, -1); // 방깍이 방어력을 깎음
   const effDef = target.def * defDebuffMult;

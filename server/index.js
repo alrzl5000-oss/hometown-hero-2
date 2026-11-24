@@ -13,7 +13,7 @@ import { ROSTER, LEVEL_CAP, characterStatsAt } from "./data/characters.js";
 import { pickCharacter, gachaRates } from "./data/gacha.js";
 import {
   promotionCost, exPromotionReady, exPromotionCost, exLevelUpGoldCost, exLevelUpDiaCost,
-  baseLevelUpGoldCost, EX_STAR_MAX, EX_STAR_STAT_BONUS_PER_STAR, exStarUpCost,
+  baseLevelUpGoldCost, EX_STAR_MAX, EX_STAR_STAT_BONUS_PER_STAR, exStarUpCost, applyExStarBonus,
   promotionStoneCraftCost,
 } from "./data/promotion.js";
 import { computeCollectionBonus, computeSynergyState } from "./data/synergy.js";
@@ -50,6 +50,19 @@ function findRosterEntry(characterId) {
   return ROSTER.find((c) => c.id === characterId);
 }
 
+// 클라이언트가 보내는 ownedCharacters는 DB 행 모양({character_id, current_rarity})이든
+// camelCase({characterId, currentRarity})든 받아서 synergy.js가 먹는 DB 행 모양으로 맞춘다.
+function normalizeOwnedRows(ownedCharacters) {
+  if (!Array.isArray(ownedCharacters)) return null;
+  return ownedCharacters
+    .map((r) => ({
+      character_id: r.character_id ?? r.characterId,
+      current_rarity: r.current_rarity ?? r.currentRarity ?? r.rarity,
+      origin_rarity: r.origin_rarity ?? r.originRarity,
+    }))
+    .filter((r) => r.character_id && findRosterEntry(r.character_id));
+}
+
 // 팀 5명 고정 + 배치(포메이션) 적용까지 한 번에 — /api/battle/simulate, /api/stages/:n/challenge
 // 등 모든 콘텐츠 전투 엔드포인트가 이 헬퍼를 통해서만 팀을 만든다(중복 로직 방지).
 //
@@ -58,22 +71,35 @@ function findRosterEntry(characterId) {
 // 진행도/도전횟수와 똑같은 방식으로 "현재 상태"를 클라이언트가 함께 넘긴다), 어빌리티
 // 줄(+선택적으로 오디세이 장비 odysseyItems)에서 계산한 팀 전체 버프를 포메이션 보너스
 // 위에 한 번 더 적용한다. 둘 다 생략하면 기존과 완전히 동일하게 동작(하위 호환).
-function buildFormedTeam(team, formationKey, { abilityLines, accountLevel, odysseyItems } = {}) {
+//
+// [EX 별 / 컬렉션·시너지 연동] 팀 원소에 exStar를 넣으면 별 보너스가 붙고, ownedCharacters
+// (지금 보유한 캐릭터 전체 목록)를 넘기면 컬렉션(도감) 보너스 + 이 팀의 시너지 세트 보너스가
+// 함께 적용된다. 파밍/PvP처럼 DB를 아는 경로는 서버가 직접 채워 넣고, 던전/보스/오디세이처럼
+// 무상태 경로는 어빌리티와 같은 방식으로 클라이언트가 함께 보낸다(생략 시 기존과 동일).
+function buildFormedTeam(team, formationKey, { abilityLines, accountLevel, odysseyItems, ownedCharacters } = {}) {
   if (!Array.isArray(team) || team.length !== TEAM_SIZE) {
     throw new Error(`팀은 정확히 ${TEAM_SIZE}명이어야 함(받은 수: ${Array.isArray(team) ? team.length : 0})`);
   }
   if (formationKey && !FORMATIONS[formationKey]) {
     throw new Error(`알 수 없는 포메이션: ${formationKey} (가능: ${Object.keys(FORMATIONS).join(", ")})`);
   }
-  const stats = team.map(({ characterId, level, rarity }) => {
+  const stats = team.map(({ characterId, level, rarity, exStar }) => {
     const entry = findRosterEntry(characterId);
     if (!entry) throw new Error(`unknown characterId: ${characterId}`);
-    return characterStatsAt(characterId, level || LEVEL_CAP[entry.rarity], rarity);
+    return applyExStarBonus(characterStatsAt(characterId, level || LEVEL_CAP[entry.rarity], rarity), exStar);
   });
-  const formed = assignFormation(stats, formationKey || DEFAULT_FORMATION);
-  if (!abilityLines && !accountLevel) return formed;
-  const bonuses = abilityBonuses(abilityLines || [], accountLevel || 1, odysseyItems);
-  return applyAbilityBonuses(formed, bonuses);
+  let formed = assignFormation(stats, formationKey || DEFAULT_FORMATION);
+  if (abilityLines || accountLevel) {
+    const bonuses = abilityBonuses(abilityLines || [], accountLevel || 1, odysseyItems);
+    formed = applyAbilityBonuses(formed, bonuses);
+  }
+  const ownedRows = normalizeOwnedRows(ownedCharacters);
+  if (ownedRows) {
+    const collection = computeCollectionBonus(ownedRows);
+    const synergy = computeSynergyState(team.map((m) => m.characterId));
+    formed = applyStatMult(formed, combineMults(collection.mult, synergy.mult));
+  }
+  return formed;
 }
 
 // 컬렉션(도감)+시너지 보너스를 팀에 적용 — applyAbilityBonuses가 받는 bonuses 객체 모양
@@ -173,7 +199,7 @@ app.get("/api/players/:playerId", async (req, res) => {
   if (ownedErr) return res.status(500).json({ error: ownedErr.message });
   const characters = owned.map((row) => ({
     ...row,
-    stats: characterStatsAt(row.character_id, row.level, row.current_rarity),
+    stats: applyExStarBonus(characterStatsAt(row.character_id, row.level, row.current_rarity), row.ex_star),
   }));
   res.json({ currency, characters });
 });
@@ -353,7 +379,7 @@ function requireFarmTeamSize(ids) {
 async function fetchOwnedCharacterStats(playerId, characterIds) {
   const { data: rows, error } = await supabase
     .from("player_characters")
-    .select("character_id, level, current_rarity")
+    .select("character_id, level, current_rarity, ex_star")
     .eq("player_id", playerId)
     .in("character_id", characterIds);
   if (error) throw new Error(error.message);
@@ -361,7 +387,7 @@ async function fetchOwnedCharacterStats(playerId, characterIds) {
   return characterIds.map((id) => {
     const row = byId.get(id);
     if (!row) throw new Error(`보유하지 않은 캐릭터: ${id}`);
-    return { characterId: id, level: row.level, rarity: row.current_rarity };
+    return { characterId: id, level: row.level, rarity: row.current_rarity, exStar: row.ex_star || 0 };
   });
 }
 
@@ -373,19 +399,17 @@ async function settleFarm(playerId, player, currency) {
   const farmTeamIds = player.farm_team || [];
   let team = null;
   if (farmTeamIds.length === TEAM_SIZE) {
-    const owned = await fetchOwnedCharacterStats(playerId, farmTeamIds);
+    // EX 별(fetchOwnedCharacterStats가 exStar 포함) + 컬렉션/시너지(보유 전체 목록)까지
+    // buildFormedTeam 한 곳에서 적용 — 다른 콘텐츠와 완전히 같은 경로.
+    const [owned, allOwnedRows] = await Promise.all([
+      fetchOwnedCharacterStats(playerId, farmTeamIds),
+      fetchAllOwnedRows(playerId),
+    ]);
     team = buildFormedTeam(owned, player.farm_formation || DEFAULT_FORMATION, {
       abilityLines: player.ability_lines || [],
       accountLevel: player.level,
+      ownedCharacters: allOwnedRows,
     });
-    // 컬렉션(도감 채움)+시너지(현재 파밍 편성) 보너스 — 파밍은 DB를 이미 들여다보는
-    // 유일한 스테이트풀 콘텐츠라, 다른 콘텐츠(던전/보스/오디세이)보다 먼저 이 보너스를
-    // 실전 적용한다(민수님 지시 "미루지 말고 다 끝내라" — 전부 informational로만
-    // 끝내지 않고 최소 하나의 실전 전투 경로엔 반드시 반영).
-    const allOwnedRows = await fetchAllOwnedRows(playerId);
-    const collection = computeCollectionBonus(allOwnedRows);
-    const synergy = computeSynergyState(farmTeamIds);
-    team = applyStatMult(team, combineMults(collection.mult, synergy.mult));
   }
 
   const now = Date.now();
@@ -762,9 +786,8 @@ app.post("/api/players/:playerId/characters/:characterId/ex-level-up-max", async
 
 // ---------------------------------------------------------------------------
 // EX 스타(5성 합성) — EX 승급 이후의 최종 성장. "버려진 조각"(태초 등급별 jsonb)+승급석
-// 소모, 별마다 EX_STAR_STAT_BONUS_PER_STAR(5%)만큼 전투 스탯 가산(characterStatsAt 쪽은
-// 아직 ex_star를 안 읽으므로, 이 보너스는 /api/players/:playerId(캐릭터 목록 조회)에서
-// stats 계산 뒤에 곱해 내려준다 — 실제 전투 반영은 다음 단계 과제로 문서에 남긴다).
+// 소모, 별마다 EX_STAR_STAT_BONUS_PER_STAR(5%)만큼 전투 스탯 가산 — applyExStarBonus가
+// buildFormedTeam(모든 전투 경로)과 캐릭터 목록 조회 양쪽에 똑같이 적용한다.
 // ---------------------------------------------------------------------------
 app.post("/api/players/:playerId/characters/:characterId/star-up", async (req, res) => {
   if (!requireDb(res)) return;
@@ -849,10 +872,10 @@ app.get("/api/players/:playerId/bonuses", async (req, res) => {
 // teamA/teamB: 각각 정확히 5명 — formationA/formationB(생략 시 "balanced")로 배치(앞열/
 // 중열/뒷열) 효과까지 반영해서 시뮬레이션한다.
 app.post("/api/battle/simulate", (req, res) => {
-  const { teamA, teamB, formationA, formationB, timeLimitSeconds, abilityLines, accountLevel, odysseyItems } = req.body || {};
+  const { teamA, teamB, formationA, formationB, timeLimitSeconds, abilityLines, accountLevel, odysseyItems, ownedCharacters } = req.body || {};
   try {
     const result = simulateBattle(
-      buildFormedTeam(teamA, formationA, { abilityLines, accountLevel, odysseyItems }),
+      buildFormedTeam(teamA, formationA, { abilityLines, accountLevel, odysseyItems, ownedCharacters }),
       buildFormedTeam(teamB, formationB),
       { timeLimitSeconds: timeLimitSeconds || 60 }
     );
@@ -892,9 +915,9 @@ const DUNGEON_REWARD_MULT_KEY = { gold: "goldMult", gem: "gemMult", exp: "expMul
 
 app.post("/api/daily-dungeon/:type/challenge", (req, res) => {
   const { type } = req.params;
-  const { team, formation, stage, maxStage, attemptsUsed, timeLimitSeconds, abilityLines, accountLevel, odysseyItems } = req.body || {};
+  const { team, formation, stage, maxStage, attemptsUsed, timeLimitSeconds, abilityLines, accountLevel, odysseyItems, ownedCharacters } = req.body || {};
   try {
-    const playerTeam = buildFormedTeam(team, formation, { abilityLines, accountLevel, odysseyItems });
+    const playerTeam = buildFormedTeam(team, formation, { abilityLines, accountLevel, odysseyItems, ownedCharacters });
     const result = resolveDungeonAttempt({
       type, team: playerTeam, stage: stage || 1, maxStage: maxStage || 1, attemptsUsed: attemptsUsed || 0, timeLimitSeconds,
     });
@@ -920,9 +943,9 @@ app.get("/api/daily-boss", (req, res) => {
 });
 
 app.post("/api/daily-boss/challenge", (req, res) => {
-  const { team, formation, maxStageReached, attemptsUsed, abilityLines, accountLevel, odysseyItems } = req.body || {};
+  const { team, formation, maxStageReached, attemptsUsed, abilityLines, accountLevel, odysseyItems, ownedCharacters } = req.body || {};
   try {
-    const playerTeam = buildFormedTeam(team, formation, { abilityLines, accountLevel, odysseyItems });
+    const playerTeam = buildFormedTeam(team, formation, { abilityLines, accountLevel, odysseyItems, ownedCharacters });
     const result = resolveDailyBossAttempt({ team: playerTeam, maxStageReached: maxStageReached || 1, attemptsUsed: attemptsUsed || 0 });
     if (result.error) return res.status(400).json(result);
     if (result.reward && (abilityLines || accountLevel)) {
@@ -954,12 +977,12 @@ app.get("/api/odyssey/:stage", (req, res) => {
 
 app.post("/api/odyssey/:stage/challenge", (req, res) => {
   const stage = Number(req.params.stage);
-  const { team, formation, items, abilityLines, accountLevel } = req.body || {};
+  const { team, formation, items, abilityLines, accountLevel, ownedCharacters } = req.body || {};
   if (!Number.isInteger(stage) || stage < 1) return res.status(400).json({ error: "stage는 1 이상의 정수여야 함" });
   try {
     // 오디세이 장비(items)는 전투 스탯(equippedOdysseyBonusSums)과 어빌리티 보너스
     // 집계(abilityBonuses의 odysseyItems 인자) 양쪽에 다 쓰인다 — 같은 장비 목록.
-    const formed = buildFormedTeam(team, formation, { abilityLines, accountLevel, odysseyItems: items });
+    const formed = buildFormedTeam(team, formation, { abilityLines, accountLevel, odysseyItems: items, ownedCharacters });
     const sums = equippedOdysseyBonusSums(Array.isArray(items) ? items : []);
     const geared = applyOdysseyEquipmentBonuses(formed, sums);
     const result = resolveOdysseyFight({ team: geared, stage });
@@ -1038,8 +1061,8 @@ app.post("/api/auth/reset", requireAuth, async (req, res) => {
 // ---------------------------------------------------------------------------
 async function resolvePvpTeam(playerId, teamIds, formation) {
   if (!Array.isArray(teamIds) || teamIds.length !== TEAM_SIZE) return null;
-  const owned = await fetchOwnedCharacterStats(playerId, teamIds);
-  return buildFormedTeam(owned, formation || DEFAULT_FORMATION);
+  const [owned, allOwnedRows] = await Promise.all([fetchOwnedCharacterStats(playerId, teamIds), fetchAllOwnedRows(playerId)]);
+  return buildFormedTeam(owned, formation || DEFAULT_FORMATION, { ownedCharacters: allOwnedRows });
 }
 // 1.0의 "공격팀 → 수비팀 → 현재 파밍팀" 순서의 대체 해결 체인(전용 팀을 아직 안 짰어도
 // 바로 참여 가능하게) 그대로 이식.

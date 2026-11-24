@@ -56,10 +56,17 @@ const DUNGEON_RATIO = {
   exp: { atk: 1.0, hp: 1.5, def: 1.3 },
 };
 
+// 던전별 "약점 직업" — 그 직업 영웅의 공격은 DUNGEON_WEAK_ROLE_BONUS_MULT배 피해(세븐나이츠
+// 키우기 일일던전의 역할 특화 보스 참고, claude/game2-stage-system.md 1번). 역할 키는
+// characters.js의 class 값과 같다.
+export const DUNGEON_WEAK_ROLE = { gold: "ranged", gem: "assassin", exp: "support" };
+export const DUNGEON_WEAK_ROLE_BONUS_MULT = 1.3; // [1차 추정치, 실측 필요]
+const WEAK_ROLE_LABEL = { ranged: "원거리 딜러", assassin: "암살자", support: "서포터" };
+
 const DUNGEON_TIPS = {
-  gold: "💡 골드 던전은 스테이지가 오를수록 보상이 기하급수적으로 커져요. 방어력이 튼튼한 탱커를 앞열에 세우면 더 높은 스테이지까지 안정적으로 밀어붙일 수 있어요.",
-  gem: "💡 다이아 던전 몬스터는 골드 던전보다 방어력이 더 높아요. 관통(PEN)이 높은 암살자나 원거리 딜러를 조합하면 더 빠르게 뚫을 수 있어요.",
-  exp: "💡 경험치 던전은 몬스터 강도가 골드·다이아 던전 중간이에요. 레벨업이 더디게 느껴질 때 밀어붙이면 체감이 확실해요.",
+  gold: `💡 골드 던전 보스는 ${WEAK_ROLE_LABEL.ranged}에게 약해요(피해 ×${DUNGEON_WEAK_ROLE_BONUS_MULT}). 스테이지가 오를수록 보상이 기하급수적으로 커지니, 탱커로 앞열을 지키고 원거리 딜러로 밀어붙이세요.`,
+  gem: `💡 다이아 던전 보스는 ${WEAK_ROLE_LABEL.assassin}에게 약해요(피해 ×${DUNGEON_WEAK_ROLE_BONUS_MULT}). 방어력이 높은 편이라 관통(PEN)이 높은 암살자 조합이 특히 잘 뚫어요.`,
+  exp: `💡 경험치 던전 보스는 ${WEAK_ROLE_LABEL.support}에게 약해요(피해 ×${DUNGEON_WEAK_ROLE_BONUS_MULT}). 레벨업이 더디게 느껴질 때 서포터를 섞어 밀어붙여 보세요.`,
 };
 
 const BASE_REWARD = { gold: 80, gem: 8, exp: 60 };
@@ -81,6 +88,8 @@ export function dungeonEnemy(type, stage) {
     pen: 0,
     res: 0,
     skills: [],
+    weakRole: DUNGEON_WEAK_ROLE[type],
+    weakRoleBonusMult: DUNGEON_WEAK_ROLE_BONUS_MULT,
   };
 }
 

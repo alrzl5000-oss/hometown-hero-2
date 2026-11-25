@@ -1,0 +1,18 @@
+{
+  "name": "hometown-hero-2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "우리동네 영웅 키우기 2.0 — 완전 별도 신규 프로젝트",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node tests/engine.test.mjs && node tests/characters.test.mjs && node tests/meta.test.mjs && node tests/stages.test.mjs && node tests/formation.test.mjs && node tests/dailyDungeon.test.mjs && node tests/dailyBoss.test.mjs && node tests/odyssey.test.mjs && node tests/accountLevel.test.mjs && node tests/abilities.test.mjs && node tests/elemental.test.mjs && node tests/synergy.test.mjs && node tests/promotion2.test.mjs && node tests/pvp.test.mjs && node tests/exStar.test.mjs && node tests/dungeonWeakRole.test.mjs && node tests/features.test.mjs && node tests/equipment.test.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.1",
+    "bcryptjs": "^3.0.3",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3"
+  }
+}

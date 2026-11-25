@@ -31,7 +31,7 @@ const SORTS = { rarity: "등급순", level: "레벨순", dps: "DPS순" };
 
 export function openTeamPicker({ title = "팀 편성", sub = "", ids = [], formation = "balanced", filterClass = null, extraTop = "", onSave }) {
   // slots[i] = i번째 자리(앞열→중열→뒷열 순)에 놓인 영웅 id 또는 null
-  const slots = Array.from({ length: 5 }, (_, i) => (S.heroById.has(ids[i]) ? ids[i] : null));
+  const slots = Array.from({ length: 5 }, (_, i) => (S.heroById.has((ids || [])[i]) ? ids[i] : null));
   let active = null; // 고른 자리(다음에 누르는 영웅/자리가 여기로)
   let form = formation || "balanced";
   let clsF = filterClass || "all";
@@ -74,7 +74,7 @@ export function openTeamPicker({ title = "팀 편성", sub = "", ids = [], forma
     const classes = ["all", ...Object.keys(S.meta.classes)].filter((c) => !filterClass || c === filterClass);
     const hint = active !== null
       ? `<b class="pos">${ROW_LABEL[rows[active]]} 자리 선택됨</b> — 영웅을 누르면 여기에 들어가고, 다른 자리를 누르면 서로 바뀌어요.`
-      : "자리를 먼저 누르고 영웅을 고르면 원하는 칸에 들어가요. 자리 두 개를 차례로 누르면 서로 바뀌고, 끌어다 놓아도 돼요. 1명부터 저장할 수 있고, 빈 자리가 있으면 앞열부터 채워서 저장돼요.";
+      : "자리를 먼저 누르고 영웅을 고르면 원하는 칸에 들어가요. 자리 두 개를 차례로 누르면 서로 바뀌고, 끌어다 놓아도 돼요. 1명부터 저장할 수 있고, 놓은 자리 그대로 저장돼요.";
     m.set(`<div><div class="h1">${esc(title)}</div>${sub ? `<div class="tip">${sub}</div>` : ""}</div>${extraTop}
       <div class="seg full">${Object.entries(S.meta.formations).map(([k, f]) => `<button data-form="${k}" class="${k === form ? "on" : ""}">${f.label} ${f.front}-${f.mid}-${f.back}</button>`).join("")}</div>
       <div class="t3 small">${esc(S.meta.formations[form].desc)}</div>
@@ -112,7 +112,7 @@ export function openTeamPicker({ title = "팀 편성", sub = "", ids = [], forma
       }
     } else if ("clear" in t.dataset) { slots.fill(null); active = null; }
     else if ("save" in t.dataset) {
-      busy(t, async () => { await onSave(filled(), form); m.close(); });
+      busy(t, async () => { await onSave([...slots], form); m.close(); }); // 빈 자리(null)까지 그대로 저장
       return;
     }
     draw();

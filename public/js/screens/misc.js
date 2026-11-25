@@ -7,7 +7,7 @@ export function openSettings() {
   const m = openModal("");
   const draw = () => {
     const me = S.me || {};
-    const h = S.heroById.get(me.farm?.team?.[0]);
+    const h = S.heroById.get((me.farm?.team || []).find(Boolean));
     const item = (act, i, t, s, danger = false) => `<button class="well" data-act="${act}" style="display:flex;align-items:center;gap:12px;padding:13px 14px;border:none;color:inherit;cursor:pointer;text-align:left;${danger ? "outline:1px solid rgba(251,113,133,.35);" : ""}"><span style="color:${danger ? "var(--red)" : "var(--t2)"};">${ic(i, 18)}</span><div class="grow"><div style="font-weight:700;${danger ? "color:var(--red);" : ""}">${t}</div><div class="t3 xs">${s}</div></div>${ic("chev", 16)}</button>`;
     m.set(`<div class="h1">설정</div>
       <div class="well" style="display:flex;align-items:center;gap:12px;padding:12px 14px;">${avatar(h?.characterId, h?.originRarity, 42)}<div class="grow"><div style="font-weight:700;">${esc(me.nickname || "이름없는 영웅")}</div><div class="t3 xs">Lv.${me.level} · ${me.isGuest ? "게스트 (이 기기에만 저장)" : `이메일 로그인 · ${esc(me.email || "")}`}</div></div></div>

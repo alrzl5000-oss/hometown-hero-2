@@ -46,7 +46,7 @@ export async function render(page) {
 }
 
 function dungeonTeam(raw) {
-  const t = raw && raw.team?.length > 0 ? raw : { team: S.me.farm.team, formation: S.me.farm.formation };
+  const t = raw && raw.team?.some(Boolean) ? raw : { team: S.me.farm.team, formation: S.me.farm.formation };
   return t;
 }
 
@@ -76,7 +76,7 @@ export async function openDungeon(type, onDone) {
       ${res ? `<div class="notice ${res.win ? "mint" : "bad"}">${res.win ? `승리! ${DREW[type](res.reward)}${res.isFirstClear ? ` · 최초 클리어 — ${res.stage}층이 열리고 도전 횟수가 다시 채워졌어요` : ""}${res.levelUp?.levelsGained ? ` · 계정 Lv.${res.levelUp.level}!` : ""}` : "패배… 팀을 강화해서 다시 도전해 보세요 (횟수 소모 없음)"}</div>${dropNotice(res.drop)}` : ""}
       <button class="btn pri lg block" data-go ${left <= 0 ? "disabled" : ""}>${left <= 0 ? "오늘 도전 횟수를 모두 썼어요" : `${ic("sword", 17)} 도전하기`}</button>`);
     const sc = m.body.querySelector("#dsc");
-    mountBattle(sc, { heroes: team.team.map((id) => ({ id, hp: 1 })), foes: [{ id: "e", hp: 1, sprite: SPRITE["dungeon_" + type], size: 90 }], formation: S.meta.formations[team.formation], heroSize: 44 });
+    mountBattle(sc, { heroes: team.team.map((id) => (id ? { id, hp: 1 } : null)), foes: [{ id: "e", hp: 1, sprite: SPRITE["dungeon_" + type], size: 90 }], formation: S.meta.formations[team.formation], heroSize: 44 });
   };
   m.body.onclick = (e) => {
     const t = e.target.closest("button");
@@ -124,7 +124,7 @@ export async function openDailyBoss(onDone) {
       <button class="btn pri lg block" data-go ${left <= 0 ? "disabled" : ""}>${left <= 0 ? "오늘 도전을 모두 마쳤어요" : `${ic("clock", 17)} ${b.fightSeconds}초 도전`}</button>`);
     const sc = m.body.querySelector("#bsc");
     const t = dungeonTeam(dg.team);
-    mountBattle(sc, { heroes: (t.team || []).map((id) => ({ id, hp: 1 })), foes: [{ id: "b", hp: 1, sprite: SPRITE.daily, size: 140 }], formation: S.meta.formations[t.formation], heroSize: 44 });
+    mountBattle(sc, { heroes: (t.team || []).map((id) => (id ? { id, hp: 1 } : null)), foes: [{ id: "b", hp: 1, sprite: SPRITE.daily, size: 140 }], formation: S.meta.formations[t.formation], heroSize: 44 });
   };
   m.body.onclick = (e) => {
     const t = e.target.closest("[data-go]");

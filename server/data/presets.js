@@ -62,8 +62,10 @@ export function normalizeTeamPresets(raw) {
   return Array.from({ length: PRESET_SLOTS }, (_, i) => normalizeTeam(arr[i]));
 }
 export function validateTeamIds(ids) {
-  if (!Array.isArray(ids) || !okTeam(ids)) throw new Error(`팀은 1~${TEAM_SIZE}명이어야 함`);
-  if (new Set(ids).size !== ids.length) throw new Error("같은 캐릭터를 두 번 넣을 수 없음");
+  if (!Array.isArray(ids) || ids.length > TEAM_SIZE) throw new Error(`팀은 1~${TEAM_SIZE}명이어야 함`);
+  const real = ids.filter(Boolean);
+  if (new Set(real).size !== real.length) throw new Error("같은 캐릭터를 두 번 넣을 수 없음");
+  if (!okTeam(ids)) throw new Error(`팀은 1~${TEAM_SIZE}명이어야 함`);
   return ids;
 }
 

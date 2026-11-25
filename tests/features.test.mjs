@@ -86,6 +86,9 @@ t("슬롯/팀 검증", () => {
   assert.equal(assertSlot("2"), 2);
   assert.throws(() => assertSlot(3));
   validateTeamIds(["a"]); // 초반엔 1명부터 편성 가능
+  validateTeamIds([null, null, null, null, "a"]); // 자리 배열 — 뒷열에만 1명
+  assert.throws(() => validateTeamIds([null, null, null, null, null]));
+  assert.throws(() => validateTeamIds(["a", null, "a"]));
   validateTeamIds(["a", "b"]);
   assert.throws(() => validateTeamIds([]));
   assert.throws(() => validateTeamIds(["a", "b", "c", "d", "e", "f"]));
@@ -162,3 +165,12 @@ t("시간 회복: 5분당 1회, 최대치 고정", () => {
 });
 
 console.log(`features: ${passed} passed`);
+
+// 자리 배열 — 뒷열에 놓은 영웅은 앞으로 밀리지 않는다
+{
+  const { assignFormation } = await import("../server/data/formation.js");
+  const formed = assignFormation([{ atk: 100, def: 100, slot: 4 }, { atk: 100, def: 100, slot: 2 }], "balanced");
+  assert.equal(formed[0].row, "back");
+  assert.equal(formed[1].row, "mid");
+  console.log("  ✓ 자리 배열 — 빈 자리를 두어도 놓은 열 그대로");
+}

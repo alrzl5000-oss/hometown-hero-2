@@ -31,7 +31,7 @@ import { simulateBattle } from "./lib/combat.js";
 import {
   stageInfo, computeFarmTick, resolveBossChallenge, resolveRetreat,
 } from "./data/farming.js";
-import { assignFormation, FORMATIONS, TEAM_SIZE, DEFAULT_FORMATION, okTeam } from "./data/formation.js";
+import { assignFormation, FORMATIONS, TEAM_SIZE, DEFAULT_FORMATION, okTeam, teamIds } from "./data/formation.js";
 import { DUNGEON_TYPES, dungeonEnemy, dungeonReward, dungeonTip, DUNGEON_MAX_ATTEMPTS, DUNGEON_MAX_STAGE, resolveDungeonAttempt } from "./data/dailyDungeon.js";
 import { BOSS_MAX_ATTEMPTS, BOSS_FIGHT_SECONDS, dailyBossEnemy, dayIndex, resolveDailyBossAttempt } from "./data/dailyBoss.js";
 import {
@@ -50,7 +50,9 @@ const app = express();
 app.use(express.json());
 // 웹 게임 화면(public/) + 캐릭터 도트(art_characters/) 정적 서빙
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-app.use(express.static(path.join(ROOT_DIR, "public"), { maxAge: "1h" }));
+// 이미지·폰트는 오래 캐시(다시 받지 않게), 화면 코드(html/js/css)는 배포하면 바로 바뀌도록 매번 확인
+app.use("/assets", express.static(path.join(ROOT_DIR, "public", "assets"), { maxAge: "7d" }));
+app.use(express.static(path.join(ROOT_DIR, "public"), { maxAge: 0 }));
 app.use("/art", express.static(path.join(ROOT_DIR, "art_characters"), { maxAge: "7d" }));
 
 const PORT = process.env.PORT || 8080;
@@ -88,16 +90,17 @@ function normalizeOwnedRows(ownedCharacters) {
 // 함께 적용된다. 파밍/PvP처럼 DB를 아는 경로는 서버가 직접 채워 넣고, 던전/보스/오디세이처럼
 // 무상태 경로는 어빌리티와 같은 방식으로 클라이언트가 함께 보낸다(생략 시 기존과 동일).
 function buildFormedTeam(team, formationKey, { abilityLines, accountLevel, odysseyItems, ownedCharacters, petPack } = {}) {
-  if (!Array.isArray(team) || !okTeam(team)) {
+  if (!Array.isArray(team) || team.length < 1 || team.length > TEAM_SIZE) {
     throw new Error(`팀은 1~${TEAM_SIZE}명이어야 함(받은 수: ${Array.isArray(team) ? team.length : 0})`);
   }
   if (formationKey && !FORMATIONS[formationKey]) {
     throw new Error(`알 수 없는 포메이션: ${formationKey} (가능: ${Object.keys(FORMATIONS).join(", ")})`);
   }
-  const stats = team.map(({ characterId, level, rarity, exStar }) => {
+  const stats = team.map(({ characterId, level, rarity, exStar, slot }) => {
     const entry = findRosterEntry(characterId);
     if (!entry) throw new Error(`unknown characterId: ${characterId}`);
-    return applyExStarBonus(characterStatsAt(characterId, level || LEVEL_CAP[entry.rarity], rarity), exStar);
+    const s = applyExStarBonus(characterStatsAt(characterId, level || LEVEL_CAP[entry.rarity], rarity), exStar);
+    return Number.isInteger(slot) ? { ...s, slot } : s;
   });
   let formed = assignFormation(stats, formationKey || DEFAULT_FORMATION);
   if (abilityLines || accountLevel) {
@@ -422,19 +425,25 @@ function requireFarmTeamSize(ids) {
 
 // 플레이어가 실제로 보유한 캐릭터인지 Supabase에서 직접 확인하고, 그 캐릭터의 "실제"
 // level/current_rarity(클라이언트가 임의로 더 세게 보낼 수 없도록)를 그대로 사용한다.
+// characterIds는 "자리 배열"(빈 자리 null)이어도 된다 — 빈 자리는 건너뛰고 각 영웅에 원래
+// 자리 번호(slot)를 붙여서 돌려준다(assignFormation이 slot으로 앞/중/뒷열을 정함).
 async function fetchOwnedCharacterStats(playerId, characterIds) {
+  const ids = teamIds(characterIds);
   const { data: rows, error } = await supabase
     .from("player_characters")
     .select("character_id, level, current_rarity, ex_star")
     .eq("player_id", playerId)
-    .in("character_id", characterIds);
+    .in("character_id", ids);
   if (error) throw new Error(error.message);
   const byId = new Map(rows.map((r) => [r.character_id, r]));
-  return characterIds.map((id) => {
+  const out = [];
+  characterIds.forEach((id, slot) => {
+    if (!id) return;
     const row = byId.get(id);
     if (!row) throw new Error(`보유하지 않은 캐릭터: ${id}`);
-    return { characterId: id, level: row.level, rarity: row.current_rarity, exStar: row.ex_star || 0 };
+    out.push({ characterId: id, level: row.level, rarity: row.current_rarity, exStar: row.ex_star || 0, slot });
   });
+  return out;
 }
 
 // 파밍 상태를 "지금 시점까지" 정산한다 — 틱 계산 + DB 반영을 한 번에. 팀 변경/보스전/

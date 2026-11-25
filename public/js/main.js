@@ -27,7 +27,7 @@ export function setTitle(t, sub = "") { title = [t, sub]; drawTop(); }
 export const go = (route) => { location.hash = "#/" + route; };
 
 function avatarHero() {
-  const ids = S.me?.farm?.team || [];
+  const ids = (S.me?.farm?.team || []).filter(Boolean);
   const h = S.heroById.get(ids[0]) || [...(S.heroes || [])].sort((a, b) => b.dps - a.dps)[0];
   return h ? art(h.characterId, h.originRarity) : null;
 }

@@ -16,10 +16,9 @@ export const BG = { gold: A + "bgt01.png", gem: A + "bgt03.png", exp: A + "bgt02
 
 // 아군 배치 좌표(%) — 진형 순서: 앞열이 가운데(적 쪽), 뒷열이 왼쪽 끝
 const ROWX = { front: 36, mid: 24, back: 11 };
-function heroSlots(n, formation) {
-  const f = formation || { front: 2, mid: 2, back: 1 };
-  const rows = [];
-  for (let i = 0; i < n; i++) rows.push(i < f.front ? "front" : i < f.front + f.mid ? "mid" : "back");
+const rowAt = (i, f) => (i < f.front ? "front" : i < f.front + f.mid ? "mid" : "back");
+// rows: 영웅마다 앞/중/뒷열 — 서버 스냅샷의 row 또는 자리 번호로 정한 열
+function heroSlots(rows) {
   const count = { front: 0, mid: 0, back: 0 }, idx = { front: 0, mid: 0, back: 0 };
   rows.forEach((r) => count[r]++);
   return rows.map((r) => {
@@ -50,9 +49,12 @@ export const petSprite = (petId) => `/assets/pets/${petLook(petId)}.png`;
 export function mountBattle(scene, { heroes: all, foes, formation, heroSize = 64, foeSize = 150, mirrorFoes = false, pets: extraPets = [] }) {
   scene.querySelectorAll(".unit").forEach((n) => n.remove());
   const units = new Map();
-  const heroes = (all || []).filter((h) => !h.isPet);
+  // 영웅 목록은 "자리 배열"(빈 자리 null/ id 없음)일 수 있다 — 자리 번호로 열을 정하고 빈 자리는 건너뜀
+  const fm = formation || { front: 2, mid: 2, back: 1 };
+  const heroes = [];
+  (all || []).forEach((h, i) => { if (h && h.id && !h.isPet) heroes.push({ ...h, row: h.row || rowAt(i, fm) }); });
   // 펫(보조 전투원) — 팀 맨 뒤, 맞지 않으니 체력바 없음
-  const pets = [...(all || []).filter((h) => h.isPet), ...extraPets];
+  const pets = [...(all || []).filter((h) => h && h.isPet), ...extraPets];
   pets.forEach((p, i) => {
     const u = document.createElement("div");
     u.className = "unit bob pet";
@@ -64,7 +66,7 @@ export function mountBattle(scene, { heroes: all, foes, formation, heroSize = 64
     scene.appendChild(u);
     units.set(p.id || `pet-${p.petId}`, { el: u, side: "A", hp: 1, max: 1, x: x + 4, y, dealt: 0, isPet: true });
   });
-  const hs = heroSlots(heroes.length, formation);
+  const hs = heroSlots(heroes.map((h) => h.row));
   heroes.forEach((h, i) => {
     const u = document.createElement("div");
     u.className = "unit bob";
@@ -152,7 +154,7 @@ export function playHits(scene, units, hits, { speed = 1, endedAt, onTick, crit 
 
 // 파밍 방치 장면 — 몹이 오른쪽에서 걸어오고, 팀이 때려서 쓰러뜨리는 연출(연출용 숫자).
 export function idleFarm(scene, { heroes, formation, species, dps, onKill, pets = [] }) {
-  const units = mountBattle(scene, { heroes: heroes.map((h) => ({ id: h.id, hp: 1 })), foes: [], formation, heroSize: 60, pets: pets.map((id) => ({ petId: id })) });
+  const units = mountBattle(scene, { heroes: heroes.map((h) => (h && h.id ? { id: h.id, hp: 1, row: h.row } : null)), foes: [], formation, heroSize: 60, pets: pets.map((id) => ({ petId: id })) });
   const mobs = [];
   let alive = true, tick = 0;
   const pickSpecies = () => {

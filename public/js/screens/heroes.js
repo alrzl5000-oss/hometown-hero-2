@@ -111,6 +111,7 @@ export function openHeroDetail(id, onChange) {
 
 // ---------------------------------------------------------------- 성장 보너스(컬렉션 / 배치 시너지)
 export async function openGrowth(teamIds = []) {
+  teamIds = (teamIds || []).filter(Boolean);
   const m = openModal(`<div class="spin"></div>`, { size: "wide" });
   let tab = "col";
   const b = await get(pp(`/bonuses${teamIds?.length ? `?teamIds=${teamIds.join(",")}` : ""}`));

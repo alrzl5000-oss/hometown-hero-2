@@ -20,7 +20,15 @@ export const FORMATIONS = {
 export const DEFAULT_FORMATION = "balanced";
 export const TEAM_SIZE = 5; // 최대 인원
 export const MIN_TEAM_SIZE = 1; // 초반엔 영웅이 적으니 1명부터 편성 가능(빈 자리는 비워 둔 채로 싸움)
-export const okTeam = (ids) => Array.isArray(ids) && ids.length >= MIN_TEAM_SIZE && ids.length <= TEAM_SIZE;
+// 팀은 "자리 배열"로 저장한다 — 인덱스 0~4가 그대로 자리(앞열→중열→뒷열 순)이고 빈 자리는 null.
+// 그래서 뒷열에만 1명을 놓아도 앞으로 밀리지 않고 그 자리에서 싸운다.
+export const teamIds = (ids) => (Array.isArray(ids) ? ids.filter(Boolean) : []);
+export const okTeam = (ids) => Array.isArray(ids) && ids.length <= TEAM_SIZE && teamIds(ids).length >= MIN_TEAM_SIZE
+  && ids.every((x) => x === null || typeof x === "string") && new Set(teamIds(ids)).size === teamIds(ids).length;
+export function rowOfSlot(slot, formationKey = DEFAULT_FORMATION) {
+  const f = FORMATIONS[formationKey] || FORMATIONS[DEFAULT_FORMATION];
+  return slot < f.front ? "front" : slot < f.front + f.mid ? "mid" : "back";
+}
 
 // teamOrdered: 편성 순서대로 정렬된 5인 배열(characterStatsAt 결과 또는 그와 동등한
 // {atk, def, ...} 객체). 각 원소에 row("front"/"mid"/"back")를 붙이고, 그 열의 보너스를
@@ -30,7 +38,8 @@ export function assignFormation(teamOrdered, formationKey = DEFAULT_FORMATION) {
   const midEnd = (formation.front || 0) + (formation.mid || 0);
   return teamOrdered.map((hero, idx) => {
     if (!hero) return hero;
-    const row = idx < formation.front ? "front" : idx < midEnd ? "mid" : "back";
+    const pos = Number.isInteger(hero.slot) ? hero.slot : idx; // 자리 배열에서 온 영웅은 원래 자리 기준
+    const row = pos < formation.front ? "front" : pos < midEnd ? "mid" : "back";
     const atkMult = row === "back" ? 1 + BACK_ATK_BONUS : row === "mid" ? 1 + MID_ATK_BONUS : 1;
     const defMult = row === "front" ? 1 + FRONT_DEF_BONUS : row === "mid" ? 1 + MID_DEF_BONUS : 1;
     return { ...hero, row, atk: Math.round(hero.atk * atkMult), def: Math.round(hero.def * defMult) };

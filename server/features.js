@@ -414,7 +414,7 @@ export function registerFeatureRoutes(app, ctx) {
     if (!theme) throw new Error(`알 수 없는 테마: ${themeKey} (가능: ${ODYSSEY_THEMES.map((t) => t.key).join(", ")})`);
     validateTeamIds(characterIds);
     if (formation && !FORMATIONS[formation]) throw new Error(`알 수 없는 포메이션: ${formation}`);
-    const wrong = characterIds.filter((id) => ROSTER_BY_ID.get(id)?.class !== theme.allowedClass);
+    const wrong = characterIds.filter((id) => id && ROSTER_BY_ID.get(id)?.class !== theme.allowedClass);
     if (wrong.length) throw new Error(`${theme.name}에는 ${CLASSES[theme.allowedClass].label}만 배치할 수 있음 (맞지 않는 캐릭터: ${wrong.join(", ")})`);
     await fetchOwnedCharacterStats(player.id, characterIds);
     const presets = normalizeThemePresets(player.odyssey_theme_presets);
@@ -864,5 +864,5 @@ const META = {
 export function teamSnapshot(team) {
   return (team || []).map((h) => (h.isPet
     ? { id: h.characterId, isPet: true, petId: h.petId, name: h.name, hp: h.hp }
-    : { id: h.characterId, name: h.name, hp: h.hp, class: h.class, element: h.element, rarity: h.rarity }));
+    : { id: h.characterId, name: h.name, hp: h.hp, class: h.class, element: h.element, rarity: h.rarity, row: h.row }));
 }

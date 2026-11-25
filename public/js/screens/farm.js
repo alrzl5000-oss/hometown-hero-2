@@ -29,6 +29,7 @@ export async function render(page) {
     setTitle("전투", `스테이지 ${st} · ${tierName(st)}`);
     const team = teamHeroes();
     const rows = rowsOf(5, farm.farmFormation);
+    const slotHeroes = [0, 1, 2, 3, 4].map((i) => S.heroById.get((farm.farmTeam || [])[i]) || null); // 자리 그대로
     const teamDps = team.reduce((s, h) => s + h.dps, 0);
     const boss = info.boss;
     const bossSp = S.meta.bossSpecies.find((b) => b.key === boss.speciesKey) || {};
@@ -65,7 +66,7 @@ export async function render(page) {
         <div class="sec"><div><div class="h2">내 파밍 팀</div><div class="t3 small">${team.length}명 · 팀 예상 DPS <span class="mint">${comma(teamDps)}</span></div></div>
           <div class="row2"><button class="btn sm" data-edit>${ic("users", 14)} 팀 편성</button><button class="btn sm pri" data-boss ${team.length < 1 ? "disabled" : ""}>${ic("crown", 14)} 보스전</button></div></div>
         <div class="g5">${[0, 1, 2, 3, 4].map((i) => {
-          const h = team[i];
+          const h = slotHeroes[i];
           if (!h) return `<button class="well slot" data-edit style="min-height:150px;border:none;cursor:pointer;">${ic("plus", 18)}</button>`;
           return `<div class="well" style="padding:8px;display:flex;flex-direction:column;align-items:center;gap:5px;text-align:center;min-width:0;cursor:pointer;" data-hero="${h.characterId}">
             <div class="sec" style="width:100%;">${badge(h.rarity, h.exStar)}<span class="t3 xs">${ROW_LABEL[rows[i]]}</span></div>
@@ -135,7 +136,7 @@ export async function render(page) {
     if (cur && bl) bl.scrollLeft = cur.offsetLeft - bl.clientWidth / 2 + cur.clientWidth / 2;
     scene = page.querySelector("#scene");
     if (idle) idle.stop();
-    if (team.length > 0) idle = idleFarm(scene, { heroes: team.map((h) => ({ id: h.characterId })), formation: S.meta.formations[farm.farmFormation], species: info.fieldSpecies, dps: Math.max(1, teamDps / team.length), pets: S.me.petSlots || [] });
+    if (team.length > 0) idle = idleFarm(scene, { heroes: slotHeroes.map((h) => (h ? { id: h.characterId } : null)), formation: S.meta.formations[farm.farmFormation], species: info.fieldSpecies, dps: Math.max(1, teamDps / team.length), pets: S.me.petSlots || [] });
   }
 
   async function presetsInfo() {
@@ -147,8 +148,8 @@ export async function render(page) {
 
   async function saveTeam(ids, formation) {
     await post(pp("/farm/team"), { characterIds: ids, formation });
-    await post(pp(`/farm/presets/${farm.activePreset || 0}/save`), { characterIds: ids, formation });
-    await Promise.all([load(), refreshMe()]);
+    // 프리셋 저장 · 화면 새로고침은 한 번에(대기 줄이기)
+    await Promise.all([post(pp(`/farm/presets/${farm.activePreset || 0}/save`), { characterIds: ids, formation }), load(), refreshMe()]);
     draw(); markPreset();
     toast("파밍 팀을 저장했어요.");
   }
@@ -172,7 +173,7 @@ export async function render(page) {
         const r = await post(pp(`/farm/presets/${t.dataset.fp}/activate`));
         farm.activePreset = r.activePreset;
         await Promise.all([load(), refreshMe()]); draw(); markPreset();
-        toast(r.farmTeam.length ? `배치 프리셋 ${Number(t.dataset.fp) + 1}로 바꿨어요.` : `프리셋 ${Number(t.dataset.fp) + 1}은 비어 있어요 — 팀 편성 후 저장하면 이 칸에 들어가요.`);
+        toast(r.farmTeam.some(Boolean) ? `배치 프리셋 ${Number(t.dataset.fp) + 1}로 바꿨어요.` : `프리셋 ${Number(t.dataset.fp) + 1}은 비어 있어요 — 팀 편성 후 저장하면 이 칸에 들어가요.`);
       });
     } else if (t.dataset.stage || t.dataset.mv) {
       const n = Number(t.dataset.stage || t.dataset.mv);

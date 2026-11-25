@@ -119,7 +119,7 @@ t("장착: 같은 부위는 교체, 해제, 어느 프리셋이든 장착 여부
   assert.deepEqual(presets, [["i1"], [], ["i3"]]);
   assert.ok(equippedAnywhere(presets).has("i3"));
   const it = rowToItem({ id: "i1", item_key: "cyclops_eye", grade: "epic", lines: [], enhance: 3 }, new Set(["i1"]));
-  assert.deepEqual(it, { id: "i1", key: "cyclops_eye", grade: "epic", lines: [], enhance: 3, equipped: true });
+  assert.deepEqual(it, { id: "i1", key: "cyclops_eye", set: "odyssey", slot: "head", grade: "epic", lines: [], enhance: 3, equipped: true });
 });
 t("강화: 성공 +1 / +10 이하 실패는 유지 / +11 이상 실패는 하락 가능", () => {
   assert.equal(rollEnhance({ grade: "rare", enhance: 0 }, () => 0).enhance, 1);

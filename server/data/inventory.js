@@ -5,13 +5,14 @@
 // 그 슬롯에 반영, 전환 무료), 자동판매는 "설정한 등급 이하"가 가방에 들어오지 않고 바로 판매,
 // 일괄판매는 장착 중이지 않은 해당 등급 이하 장비를 한 번에 판매.
 import {
-  ODYSSEY_ITEMS, ODYSSEY_GRADES, ODYSSEY_SELL_GOLD, ODYSSEY_SELL_GEMS, ODYSSEY_ENHANCE_MAX_LEVEL,
-  odysseyEnhanceCost, odysseyEnhanceSuccessRate, odysseyEnhanceDowngradeChanceOnFail, odysseyEnhanceDowngradeFloor,
+  ODYSSEY_GRADES, ODYSSEY_SELL_GOLD, ODYSSEY_SELL_GEMS, ODYSSEY_ENHANCE_MAX_LEVEL,
+  odysseyEnhanceSuccessRate, odysseyEnhanceDowngradeChanceOnFail, odysseyEnhanceDowngradeFloor,
 } from "./odyssey.js";
+import { SLOT_KEYS, slotOf, setOf, enhanceCost } from "./equipment.js";
 import { PRESET_SLOTS } from "./presets.js";
 
 export const INVENTORY_CAP = 100;
-export const EQUIP_SLOTS = Object.keys(ODYSSEY_ITEMS); // 장비 종류 하나 = 부위 하나
+export const EQUIP_SLOTS = SLOT_KEYS; // 무기/머리/갑옷/망토/목걸이/유물 — 부위마다 1개
 
 export function gradeIndex(grade) {
   return ODYSSEY_GRADES.indexOf(grade);
@@ -32,11 +33,12 @@ export function normalizeEquipPresets(raw) {
   const arr = Array.isArray(raw) ? raw : [];
   return Array.from({ length: PRESET_SLOTS }, (_, i) => (Array.isArray(arr[i]) ? arr[i].filter(Boolean) : []));
 }
-// 같은 부위(item_key)에 이미 다른 장비가 있으면 빼고 새 장비를 넣는다.
+// 같은 부위에 이미 다른 장비가 있으면 빼고 새 장비를 넣는다(부위 = 장비 카탈로그의 slot).
 export function equipInPreset(presetIds, itemsById, itemId) {
   const item = itemsById.get(itemId);
   if (!item) throw new Error("가방에 없는 장비");
-  const kept = presetIds.filter((id) => id !== itemId && itemsById.get(id)?.item_key !== item.item_key);
+  const slot = slotOf(item.item_key);
+  const kept = presetIds.filter((id) => id !== itemId && itemsById.has(id) && slotOf(itemsById.get(id).item_key) !== slot);
   return [...kept, itemId];
 }
 export function unequipInPreset(presetIds, itemId) {
@@ -48,7 +50,10 @@ export function equippedAnywhere(presets) {
 
 // DB 행 → 전투 계산용 아이템 모양(odyssey.js의 equippedOdysseyBonusSums가 먹는 {key, grade, lines, enhance, equipped})
 export function rowToItem(row, equippedIds) {
-  return { id: row.id, key: row.item_key, grade: row.grade, lines: row.lines || [], enhance: row.enhance || 0, equipped: equippedIds ? equippedIds.has(row.id) : false };
+  return {
+    id: row.id, key: row.item_key, set: setOf(row.item_key), slot: slotOf(row.item_key), grade: row.grade, lines: row.lines || [],
+    enhance: row.enhance || 0, equipped: equippedIds ? equippedIds.has(row.id) : false,
+  };
 }
 
 // 강화 1회 — 성공/실패/하락을 결정한다(비용 지불은 호출부).
@@ -56,7 +61,7 @@ export function rollEnhance(item, rng = Math.random) {
   const cur = item.enhance || 0;
   if (cur >= ODYSSEY_ENHANCE_MAX_LEVEL) throw new Error(`이미 최대 강화(+${ODYSSEY_ENHANCE_MAX_LEVEL})`);
   const next = cur + 1;
-  const cost = odysseyEnhanceCost(item.grade, cur);
+  const cost = enhanceCost(item.grade, cur); // { gold, dust }
   const rate = odysseyEnhanceSuccessRate(next);
   if (rng() < rate) return { success: true, enhance: next, downgraded: false, cost, rate };
   const down = rng() < odysseyEnhanceDowngradeChanceOnFail(next);

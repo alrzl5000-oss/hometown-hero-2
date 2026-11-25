@@ -114,8 +114,8 @@ export function themeForStage(stage) {
 // 2. 체감 난이도(pseudoStage) — "바퀴 안에서는 테마 간 동일, 바퀴가 바뀔 때 점프".
 //    기존 게임의 설계를 그대로(로컬 윈도우 1~5 + 바퀴 인덱스 × CYCLE_STEP).
 // ---------------------------------------------------------------------------
-const ODYSSEY_CYCLE_LENGTH = ODYSSEY_THEMES.length * 5; // 25
-const ODYSSEY_CYCLE_STEP = 9; // [1차 추정치] 2.0 전투엔진 기준 재산정 — 실측 후 조정 필요
+export const ODYSSEY_CYCLE_LENGTH = ODYSSEY_THEMES.length * 5; // 25
+export const ODYSSEY_CYCLE_STEP = 9; // [1차 추정치] 2.0 전투엔진 기준 재산정 — 실측 후 조정 필요
 
 function localStageWithinWindow(stage) {
   return ((Math.max(1, stage || 1) - 1) % 5) + 1;
@@ -268,6 +268,8 @@ function rollItemLines(itemKey, grade) {
 
 export const ODYSSEY_UNIVERSAL_ITEM_KEY = "odysseus_bow";
 export const ODYSSEY_BOW_DROP_CHANCE = 0.1;
+// 테마 장비도 확률 드랍(확정 없음) — 실제 확률은 equipment.js DROP_MAX.odyssey × 스테이지 보정
+export const ODYSSEY_THEME_DROP_CHANCE = 0.35;
 export const ODYSSEY_GRADES = ["rare", "epic", "unique", "legendary"];
 export const ODYSSEY_GRADE_LABEL = { rare: "레어", epic: "에픽", unique: "유니크", legendary: "레전더리" };
 export const ODYSSEY_GRADE_COLOR = { rare: "#4c8bf5", epic: "#a855f7", unique: "#f5b301", legendary: "#ff4d6d" };
@@ -303,6 +305,10 @@ function rollItemByKey(key, stage) {
   const grade = rollOdysseyGrade(stage);
   const lines = rollItemLines(key, grade);
   return { key, grade, lines };
+}
+// 등급을 밖에서 정해 굴리기 — 장비 개편 후 드랍 확률·등급은 equipment.js(스테이지 보정)가 정한다.
+export function rollOdysseyItemWithGrade(key, grade) {
+  return { key, grade, lines: rollItemLines(key, grade) };
 }
 export function rollOdysseyItem(stage) {
   const theme = themeForStage(stage);
@@ -450,7 +456,7 @@ export const ODYSSEY_REGEN_SECONDS = 60 * 5; // 5분마다 1회 자동 충전(�
 // ---------------------------------------------------------------------------
 export function resolveOdysseyFight({ team, stage }) {
   const theme = themeForStage(stage);
-  const invalid = team.some((h) => h.class !== theme.allowedClass);
+  const invalid = team.some((h) => !h.isPet && h.class !== theme.allowedClass); // 펫은 직업 제한 없음
   if (invalid) throw new Error(`${theme.name}에는 ${CLASSES[theme.allowedClass].label}만 배치할 수 있습니다.`);
 
   const buffedTeam = applyGiantHpAtkBuff(team, theme);
@@ -462,7 +468,8 @@ export function resolveOdysseyFight({ team, stage }) {
   }
 
   const stoneGain = rollOdysseyPromotionStone();
-  const rolled = [rollOdysseyItem(stage), rollOdysseusBow(stage)].filter(Boolean);
+  // 장비 드랍은 equipment.js의 rollOdysseyDrops(스테이지 보정 확률·등급)가 담당 — 여기선 안 굴린다.
+  const rolled = [];
   return {
     win: true,
     theme: theme.key,

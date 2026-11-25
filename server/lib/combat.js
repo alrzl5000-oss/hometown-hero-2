@@ -108,8 +108,13 @@ export function makeFighter(hero) {
     // 영향 없음(스킬 쪽은 applyAbilityBonuses가 burstMult에 직접 곱해서 반영한다).
     // server/data/abilities.js 참고.
     normalDmgMult: hero.normalDmgMult || 1,
+    // [펫] 보조 전투원 — 공격·스킬은 하지만 적이 노릴 수 없고(타겟/회복 대상 제외), 죽지 않으며,
+    // 승패 판정(전멸 여부)에도 들어가지 않는다. server/data/pets.js 참고.
+    isPet: !!hero.isPet,
   };
 }
+// 승패·타겟 판정에 들어가는 "진짜 전투원"(살아 있고 펫이 아님)
+const isCombatant = (f) => f.alive && !f.isPet;
 
 export function makeSide(heroes) {
   return {
@@ -224,7 +229,7 @@ function buffSourceId(fighter, skill) {
 // heal의 대상 선택 — 체력 "비율"이 가장 낮은 생존 아군(죽은 아군은 revive가 처리할 몫이라
 // 제외한다).
 function pickHealTarget(side) {
-  const alive = side.fighters.filter((f) => f.alive);
+  const alive = side.fighters.filter(isCombatant);
   if (!alive.length) return null;
   return alive.reduce((lowest, f) => (f.hp / f.hpMax < lowest.hp / lowest.hpMax ? f : lowest));
 }
@@ -316,7 +321,7 @@ const SKILL_HANDLERS = {
 // 대상 선택 — forceTargetId(도발)가 걸려 있으면 그 상대를 우선한다.
 // ---------------------------------------------------------------------------
 function pickTarget(attacker, oppSide, t) {
-  const alive = oppSide.fighters.filter((f) => f.alive);
+  const alive = oppSide.fighters.filter(isCombatant);
   if (!alive.length) return null;
   const taunters = alive.filter((f) => f.forceTargetId === attacker.characterId && t < f.forceTargetUntil);
   const pool = taunters.length ? taunters : alive;
@@ -389,7 +394,7 @@ function resolveAttack(attacker, mySide, oppSide, t, hits) {
       const healed = skill.kind === "heal" ? Math.round(handlerResult || 0) : undefined;
       hits.push({ t, actor: attacker.characterId, isSkill: true, skillKind: skill.kind, dmg: Math.round(convertedDmg), ...(healed !== undefined ? { heal: healed } : {}) });
     }
-    if (!oppSide.fighters.some((f) => f.alive)) break; // 상대가 전멸했으면 나머지 스킬은 의미 없음
+    if (!oppSide.fighters.some(isCombatant)) break; // 상대가 전멸했으면 나머지 스킬은 의미 없음
   }
 }
 
@@ -402,9 +407,10 @@ function resolveAttack(attacker, mySide, oppSide, t, hits) {
 function runBattleLoop(sideA, sideB, startT, timeLimitSeconds, hits) {
   let t = startT;
   while (t <= timeLimitSeconds) {
+    // 펫만 남은 쪽은 전멸로 본다. 행동 순서에는 펫도 포함.
+    if (!sideA.fighters.some(isCombatant) || !sideB.fighters.some(isCombatant)) break;
     const aliveA = sideA.fighters.filter((f) => f.alive);
     const aliveB = sideB.fighters.filter((f) => f.alive);
-    if (!aliveA.length || !aliveB.length) break;
 
     let next = null;
     let nextSide = null;
@@ -426,8 +432,8 @@ export function simulateBattle(teamA, teamB, { timeLimitSeconds = 60 } = {}) {
   const hits = [];
   const t = runBattleLoop(sideA, sideB, 0, timeLimitSeconds, hits);
 
-  const aAlive = sideA.fighters.some((f) => f.alive);
-  const bAlive = sideB.fighters.some((f) => f.alive);
+  const aAlive = sideA.fighters.some(isCombatant);
+  const bAlive = sideB.fighters.some(isCombatant);
   return { winner: aAlive && !bAlive ? "A" : bAlive && !aAlive ? "B" : "draw", hits, t, sideA, sideB };
 }
 
@@ -446,9 +452,9 @@ export function simulateGauntlet(playerTeam, enemyPhases, { timeLimitSeconds = 1
   for (const phaseHeroes of enemyPhases) {
     const sideB = makeSide(phaseHeroes);
     t = runBattleLoop(sideA, sideB, t, timeLimitSeconds, hits);
-    const aAlive = sideA.fighters.some((f) => f.alive);
-    const bAlive = sideB.fighters.some((f) => f.alive);
-    phaseResults.push({ cleared: aAlive && !bAlive, t, survivorsA: sideA.fighters.filter((f) => f.alive).length });
+    const aAlive = sideA.fighters.some(isCombatant);
+    const bAlive = sideB.fighters.some(isCombatant);
+    phaseResults.push({ cleared: aAlive && !bAlive, t, survivorsA: sideA.fighters.filter(isCombatant).length });
     if (!aAlive || t > timeLimitSeconds) break; // 플레이어 전멸 또는 시간 초과 — 다음 phase 진행 안 함
   }
 
@@ -467,8 +473,8 @@ export function simulateOdysseyFight(team, enemy, { timeLimitSeconds = 30 } = {}
   const sideB = makeSide([{ ...enemy, immuneNormal: !!enemy.zeroNormal }]);
   const hits = [];
   const t = runBattleLoop(sideA, sideB, 0, timeLimitSeconds, hits);
-  const aAlive = sideA.fighters.some((f) => f.alive);
-  const bAlive = sideB.fighters.some((f) => f.alive);
+  const aAlive = sideA.fighters.some(isCombatant);
+  const bAlive = sideB.fighters.some(isCombatant);
   const timedOut = t >= timeLimitSeconds && bAlive;
   return { winner: aAlive && !bAlive ? "A" : bAlive && !aAlive ? "B" : "draw", win: aAlive && !bAlive, timedOut, hits, t, sideA, sideB };
 }

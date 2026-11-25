@@ -28,7 +28,7 @@ export const BOSS_FIGHT_SECONDS = 20;
 
 // 요일별(0~6) 2차 스킬 — stages.js의 BOSS_SKILL_POOL과 같은 개념을 재사용(결정론적
 // 선택이 아니라 "오늘이 무슨 요일인가"로 매일 바뀐다는 점만 다르다).
-const DAILY_BOSS_SKILL_POOL = [
+export const DAILY_BOSS_SKILL_POOL = [
   { key: "dboss_stun", name: "포효", kind: "stunAll", stunDuration: 1.2, manaCostBase: 55 },
   { key: "dboss_debuffdef", name: "약점 노출", kind: "debuffDef", reduction: 0.3, buffDuration: 6, manaCostBase: 35 },
   { key: "dboss_debuffspd", name: "속박의 울음", kind: "debuffSpd", spdReduction: 0.25, buffDuration: 6, manaCostBase: 35 },

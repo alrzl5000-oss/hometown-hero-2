@@ -41,10 +41,17 @@ import {
 import { supabase, hasSupabaseConfig, checkDatabaseConnection } from "./db.js";
 import { GACHA_BUNDLES, GACHA_BUNDLE_SIZES, pullBundle, aggregatePulls, planBundleApplication } from "./data/gachaBundle.js";
 import { normalizeAbilityPresets, abilityLinesForContent, ABILITY_CONTENT_KEYS, ABILITY_CONTENT_LABELS, PRESET_SLOTS } from "./data/presets.js";
-import { registerFeatureRoutes, makePlayerContext } from "./features.js";
+import { registerFeatureRoutes, makePlayerContext, teamSnapshot } from "./features.js";
+import { rollSetItem, fieldDropCount, rollDrop, pvpTier } from "./data/equipment.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const app = express();
 app.use(express.json());
+// 웹 게임 화면(public/) + 캐릭터 도트(art_characters/) 정적 서빙
+const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+app.use(express.static(path.join(ROOT_DIR, "public"), { maxAge: "1h" }));
+app.use("/art", express.static(path.join(ROOT_DIR, "art_characters"), { maxAge: "7d" }));
 
 const PORT = process.env.PORT || 8080;
 const DIA_PER_PULL = 300; // [임시값] 실제 재화 밸런스는 아직 확정 전 — 추후 조정 필요
@@ -80,7 +87,7 @@ function normalizeOwnedRows(ownedCharacters) {
 // (지금 보유한 캐릭터 전체 목록)를 넘기면 컬렉션(도감) 보너스 + 이 팀의 시너지 세트 보너스가
 // 함께 적용된다. 파밍/PvP처럼 DB를 아는 경로는 서버가 직접 채워 넣고, 던전/보스/오디세이처럼
 // 무상태 경로는 어빌리티와 같은 방식으로 클라이언트가 함께 보낸다(생략 시 기존과 동일).
-function buildFormedTeam(team, formationKey, { abilityLines, accountLevel, odysseyItems, ownedCharacters } = {}) {
+function buildFormedTeam(team, formationKey, { abilityLines, accountLevel, odysseyItems, ownedCharacters, petPack } = {}) {
   if (!Array.isArray(team) || team.length !== TEAM_SIZE) {
     throw new Error(`팀은 정확히 ${TEAM_SIZE}명이어야 함(받은 수: ${Array.isArray(team) ? team.length : 0})`);
   }
@@ -102,6 +109,12 @@ function buildFormedTeam(team, formationKey, { abilityLines, accountLevel, odyss
     const collection = computeCollectionBonus(ownedRows);
     const synergy = computeSynergyState(team.map((m) => m.characterId));
     formed = applyStatMult(formed, combineMults(collection.mult, synergy.mult));
+  }
+  // [펫] 장착 펫 패시브 + 펫 도감 보너스를 영웅 5명에게 걸고, 펫 자신은 "적이 노릴 수 없는
+  // 보조 전투원"으로 팀 뒤에 붙인다(공격·스킬은 함). server/data/pets.js.
+  if (petPack) {
+    formed = applyAbilityBonuses(formed, petPack.bonus);
+    if (petPack.fighters?.length) formed = [...formed, ...petPack.fighters];
   }
   return formed;
 }
@@ -431,6 +444,7 @@ async function fetchOwnedCharacterStats(playerId, characterIds) {
 async function settleFarm(playerId, player, currency) {
   const farmTeamIds = player.farm_team || [];
   let team = null;
+  let rewardMult = { goldMult: 1, expMult: 1, gemMult: 1 };
   if (farmTeamIds.length === TEAM_SIZE) {
     // EX 별(fetchOwnedCharacterStats가 exStar 포함) + 컬렉션/시너지(보유 전체 목록)까지
     // buildFormedTeam 한 곳에서 적용 — 다른 콘텐츠와 완전히 같은 경로.
@@ -441,6 +455,9 @@ async function settleFarm(playerId, player, currency) {
       playerCtx.combatOptionsFor(playerId, player, "farm"),
     ]);
     team = buildFormedTeam(owned, player.farm_formation || DEFAULT_FORMATION, { ...opts, ownedCharacters: allOwnedRows });
+    // 골드/경험치/다이아 획득량(어빌리티 · 장비 · 세트 효과)이 파밍 수입에도 실제로 붙는다
+    // (2026-11-25 장비 개편 — 이전엔 던전/일일보스 보상에만 적용되고 파밍엔 빠져 있었음).
+    rewardMult = abilityBonuses(opts.abilityLines || [], opts.accountLevel || 1, opts.odysseyItems);
   }
 
   const now = Date.now();
@@ -455,9 +472,9 @@ async function settleFarm(playerId, player, currency) {
   }
 
   const tick = computeFarmTick(team, player.farm_stage || 1, elapsedSeconds);
-  const goldAcc = (Number(player.farm_gold_remainder) || 0) + tick.gold;
-  const expAcc = (Number(player.farm_exp_remainder) || 0) + tick.exp;
-  const gemAcc = (Number(player.farm_gem_remainder) || 0) + tick.gem;
+  const goldAcc = (Number(player.farm_gold_remainder) || 0) + tick.gold * rewardMult.goldMult;
+  const expAcc = (Number(player.farm_exp_remainder) || 0) + tick.exp * rewardMult.expMult;
+  const gemAcc = (Number(player.farm_gem_remainder) || 0) + tick.gem * rewardMult.gemMult;
   const killAcc = (Number(player.farm_kill_remainder) || 0) + tick.kills;
   const goldWhole = Math.floor(goldAcc);
   const expWhole = Math.floor(expAcc);
@@ -475,9 +492,13 @@ async function settleFarm(playerId, player, currency) {
     level,
     exp,
   };
+  // 개척자 세트 — 잡몹 처치 수에 비례해 낮은 확률로 드랍(자리 비움 중 몫 포함, 한 번에 최대 15개)
+  const dropN = fieldDropCount(killWhole, player.farm_stage || 1);
+  const drops = dropN ? await playerCtx.storeDrops(player, Array.from({ length: dropN }, () => rollSetItem("field", { tier: player.farm_stage || 1 }))) : null;
   const currencyUpdates = {
-    gold: currency.gold + goldWhole,
-    dia: currency.dia + gemWhole + gemsGained,
+    gold: currency.gold + goldWhole + (drops?.gold || 0),
+    dia: currency.dia + gemWhole + gemsGained + (drops?.gems || 0),
+    ...(drops?.dust ? { dust: (Number(currency.dust) || 0) + drops.dust } : {}),
     updated_at: new Date().toISOString(),
   };
   await Promise.all([
@@ -491,6 +512,7 @@ async function settleFarm(playerId, player, currency) {
     gained: {
       gold: goldWhole, exp: expWhole, gem: gemWhole, kills: killWhole,
       levelsGained, accountGemsGained: gemsGained, elapsedSeconds: tick.cappedSeconds,
+      drops: drops ? drops.stored : [], autoHandled: drops ? drops.autoSold.length : 0,
     },
     team,
   };
@@ -595,6 +617,8 @@ app.post("/api/players/:playerId/farm/boss-challenge", async (req, res) => {
       farm_max_stage: result.maxStage,
       farm_last_tick_at: new Date().toISOString(),
     }).eq("id", playerId);
+    // 정복자 세트 — 처음 깨는 층의 보스를 이겼을 때만 30%(이미 깬 층 재도전은 드랍 없음)
+    const drop = result.win && result.isFirstClear && rollDrop("floorBoss", stage) ? await playerCtx.grantSetDrops(settled.player, "floorBoss", 1, stage) : null;
 
     res.json({
       win: result.win,
@@ -602,11 +626,13 @@ app.post("/api/players/:playerId/farm/boss-challenge", async (req, res) => {
       maxStage: result.maxStage,
       isFirstClear: !!result.isFirstClear,
       diaBonus: result.diaBonus || 0,
-      boss: { name: result.boss.name, icon: result.boss.icon, speciesKey: result.boss.speciesKey },
+      boss: { name: result.boss.name, icon: result.boss.icon, speciesKey: result.boss.speciesKey, hp: result.boss.hp, characterId: result.boss.characterId, element: result.boss.element },
+      team: teamSnapshot(bossTeam),
       hits: result.hits,
       endedAt: result.endedAt,
       currency: nextCurrency,
       settledGain: settled.gained,
+      drop,
     });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -1021,9 +1047,7 @@ app.post("/api/odyssey/:stage/challenge", (req, res) => {
     // 오디세이 장비(items)는 전투 스탯(equippedOdysseyBonusSums)과 어빌리티 보너스
     // 집계(abilityBonuses의 odysseyItems 인자) 양쪽에 다 쓰인다 — 같은 장비 목록.
     const formed = buildFormedTeam(team, formation, { abilityLines, accountLevel, odysseyItems: items, ownedCharacters });
-    const sums = equippedOdysseyBonusSums(Array.isArray(items) ? items : []);
-    const geared = applyOdysseyEquipmentBonuses(formed, sums);
-    const result = resolveOdysseyFight({ team: geared, stage });
+    const result = resolveOdysseyFight({ team: formed, stage });
     res.json(result);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -1143,6 +1167,9 @@ app.get("/api/players/:playerId/pvp/state", async (req, res) => {
     rank: (rank || 0) + 1,
     defenseTeam: player.pvp_defense_team || [],
     attackTeam: player.pvp_attack_team || [],
+    defenseFormation: player.pvp_defense_formation || "balanced",
+    attackFormation: player.pvp_attack_formation || "balanced",
+    nextRegenAt: regen.attempts >= PVP_MAX_ATTEMPTS ? null : new Date(new Date(regen.lastRegenAt).getTime() + 600000).toISOString(),
   });
 });
 
@@ -1184,7 +1211,7 @@ app.get("/api/players/:playerId/pvp/targets", async (req, res) => {
 
   const { data: candidates, error } = await supabase
     .from("players")
-    .select("id, pvp_rating, pvp_defense_team, pvp_defense_formation, farm_team, farm_formation, farm_max_stage")
+    .select("*")
     .neq("id", playerId)
     .order("pvp_rating", { ascending: false })
     .limit(200);
@@ -1195,7 +1222,11 @@ app.get("/api/players/:playerId/pvp/targets", async (req, res) => {
 
   const targets = await Promise.all(sorted.map(async (c) => {
     const team = await resolveEffectiveDefenseTeam(c.id, c);
-    return { playerId: c.id, rating: c.pvp_rating ?? PVP_RATING_START, estimatedPower: team ? estimateTeamPower(team) : 0, maxStage: c.farm_max_stage || 1 };
+    return {
+      playerId: c.id, nickname: c.nickname || null, rating: c.pvp_rating ?? PVP_RATING_START, estimatedPower: team ? estimateTeamPower(team) : 0,
+      maxStage: c.farm_max_stage || 1, wins: c.pvp_wins || 0, losses: c.pvp_losses || 0,
+      teamIds: (c.pvp_defense_team && c.pvp_defense_team.length === TEAM_SIZE ? c.pvp_defense_team : c.farm_team) || [],
+    };
   }));
   res.json({ targets });
 });
@@ -1247,6 +1278,11 @@ async function settlePvpMatch({ attackerId, defenderId, rated }) {
     }).eq("player_id", attackerId);
   }
 
+  // 투기장 세트 — 레이팅전 승리 시, 레이팅이 높을수록 확률·등급 ↑ (최대 4%)
+  // 확률·등급 모두 레이팅 기준(경기 전 내 레이팅)
+  const pvpT = pvpTier(attackerRating);
+  const drop = rated && win && rollDrop("pvp", pvpT) ? await playerCtx.grantSetDrops(attacker, "pvp", 1, pvpT) : null;
+
   await supabase.from("pvp_matches").insert({
     attacker_id: attackerId, defender_id: defenderId, attacker_win: win, rated: !!rated,
     attacker_rating_before: attackerRating, defender_rating_before: defenderRating,
@@ -1255,7 +1291,8 @@ async function settlePvpMatch({ attackerId, defenderId, rated }) {
   });
 
   return {
-    win, rated: !!rated, hits: result.hits, endedAt: result.t,
+    win, rated: !!rated, hits: result.hits, endedAt: result.t, teamA: teamSnapshot(attackTeam), teamB: teamSnapshot(defenseTeam),
+    defenderNickname: defender.nickname || null, drop,
     attackerRatingBefore: attackerRating, attackerRatingAfter: attackerRating + ratingChange.deltaA,
     defenderRatingBefore: defenderRating, defenderRatingAfter: defenderRating + ratingChange.deltaB,
     goldReward, diaReward,

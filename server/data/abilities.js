@@ -17,7 +17,7 @@
 //   "핵심 재미"(등급/수치 뽑기 + 고정 재설정)와는 무관한 UI 편의 기능이라 1차 구현에서는
 //   뺐다. 필요해지면 old game의 switchAbilityPreset 패턴을 그대로 가져오면 된다.
 // - EX 승급 이후 "버려진 조각" 환산 같은 조각 상한/오버플로 처리 — 어빌리티와 무관.
-import { equippedOdysseyBonusSums } from "./odyssey.js";
+import { equipmentBonusSums } from "./equipment.js";
 import { levelAtkBonusMult } from "./accountLevel.js";
 
 export const ABILITY_SLOT_COUNT = 3;
@@ -143,20 +143,26 @@ export function rerollAbilityLines(currentLines, slots, lockedIndices, level) {
 // 보너스도 같은 카테고리에 합산된다(기존 게임과 동일하게 어빌리티 줄과 오디세이 장비가
 // 같은 스탯 풀을 공유) — 넘기지 않으면 어빌리티 줄만으로 계산한다.
 export function abilityBonuses(lines, level, odysseyItems) {
-  const sums = { gold: 0, atk: 0, spd: 0, vit: 0, crit: 0, luck: 0, exp: 0, skillDmg: 0, normalDmg: 0 };
+  const sums = { gold: 0, atk: 0, spd: 0, vit: 0, crit: 0, luck: 0, exp: 0, skillDmg: 0, normalDmg: 0, critDmg: 0, atkFlat: 0, vitFlat: 0, manaRegen: 0, defBreak: 0 };
   for (const line of Array.isArray(lines) ? lines : []) {
     if (!line || !line.key || !(line.key in sums)) continue;
     sums[line.key] += Number(line.value) || 0;
   }
   if (odysseyItems) {
-    const equipSums = equippedOdysseyBonusSums(odysseyItems);
+    // 장비(옵션 + 강화 + 세트 효과) — 2026-11-25 장비 개편부터 치명타 피해/고정 공격·체력/
+    // 마나 회복/적 방어력 감소도 모든 콘텐츠에 실제로 반영된다(이전엔 오디세이에서만).
+    const equipSums = equipmentBonusSums(odysseyItems);
     for (const key of Object.keys(equipSums)) if (key in sums) sums[key] += equipSums[key];
   }
   const levelMult = levelAtkBonusMult(level);
   return {
     goldMult: 1 + sums.gold / 100,
     atkMult: (1 + sums.atk / 100) * levelMult,
-    spdMult: 1 + sums.spd / 100,
+    spdMult: 1 + (sums.spd + sums.manaRegen) / 100,
+    critDmgMult: 1 + sums.critDmg / 100,
+    atkFlat: sums.atkFlat,
+    vitFlat: sums.vitFlat,
+    penAdd: sums.defBreak / 100,
     hpMult: 1 + sums.vit / 100,
     defMult: 1 + sums.vit / 100,
     critAdd: sums.crit / 100,
@@ -183,11 +189,13 @@ export function applyAbilityBonuses(team, bonuses) {
     );
     return {
       ...h,
-      atk: Math.round(h.atk * bonuses.atkMult),
-      hp: Math.round(h.hp * bonuses.hpMult),
-      def: Math.round(h.def * bonuses.defMult),
+      atk: Math.round(h.atk * bonuses.atkMult + (bonuses.atkFlat || 0)),
+      hp: Math.round(h.hp * bonuses.hpMult + (bonuses.vitFlat || 0) * 1.2),
+      def: Math.round(h.def * bonuses.defMult + (bonuses.vitFlat || 0)),
       spd: h.spd * bonuses.spdMult,
       critRate: Math.min(0.95, h.critRate + bonuses.critAdd),
+      critDmg: (h.critDmg || 1.5) * (bonuses.critDmgMult || 1),
+      pen: Math.min(0.9, (h.pen || 0) + (bonuses.penAdd || 0)),
       normalDmgMult: (h.normalDmgMult || 1) * bonuses.normalDmgMult,
       skills,
     };

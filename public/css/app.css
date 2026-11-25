@@ -198,3 +198,10 @@ input.inp:focus{border-color:rgba(163,230,53,.5)}
   @keyframes up{from{transform:translateY(40px);opacity:0}}
 }
 @media (min-width:861px){.only-m{display:none!important}}
+
+/* 팀 편성 — 자리 선택/끌어다 놓기 */
+.tslot{transition:outline-color .12s,background .12s}
+.tslot.slot-on{outline:2px solid #a3e635;background:rgba(163,230,53,.12);color:var(--t1)}
+.tslot.slot-over{outline:2px dashed #a3e635}
+.tslot-x{position:absolute;top:3px;right:3px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border:none;background:rgba(0,0,0,.35);color:var(--t2);cursor:pointer;border-radius:3px;padding:0}
+.tslot-x:hover{color:#fff;background:rgba(220,38,38,.6)}

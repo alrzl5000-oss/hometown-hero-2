@@ -63,7 +63,7 @@ export async function render(page) {
             const cur = t.key === th.key;
             return `<button class="well" data-edit="${t.key}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:none;color:inherit;cursor:pointer;text-align:left;${cur ? "outline:1px solid rgba(250,204,21,.6);background:rgba(250,204,21,.06);" : ""}">
               <span class="t2">${cls(t.allowedClass, 13)}</span><div class="grow"><div class="row2"><b class="small">${esc(t.name)}</b>${cur ? `<span class="chip warn" style="height:20px;font-size:10px;">지금 테마</span>` : ""}</div>
-              <div class="t3 xs">${tt.team.length === 5 ? `${tt.team.map((id) => esc(S.heroById.get(id)?.name || "")).join(" · ")}` : "아직 편성 안 됨"}</div></div>${ic("chev", 14)}</button>`;
+              <div class="t3 xs">${tt.team.length > 0 ? `${tt.team.map((id) => esc(S.heroById.get(id)?.name || "")).join(" · ")}` : "아직 편성 안 됨"}</div></div>${ic("chev", 14)}</button>`;
           }).join("")}
         </div>
         <div class="card pad col"><div class="h3">보상</div>
@@ -73,7 +73,7 @@ export async function render(page) {
           <button class="btn sm block" onclick="location.hash='#/equipment'">${ic("bag", 14)} 장비 가방 열기</button></div>
       </div></div>`;
     const scene = page.querySelector("#scene");
-    const heroes = myTeam.team.length === 5 ? myTeam.team.map((id) => ({ id, hp: 1 })) : [];
+    const heroes = myTeam.team.length > 0 ? myTeam.team.map((id) => ({ id, hp: 1 })) : [];
     mountBattle(scene, { heroes, foes: [{ id: "boss", hp: 1, sprite: SPRITE[th.key], size: 150 }], formation: S.meta.formations[myTeam.formation] });
   }
 

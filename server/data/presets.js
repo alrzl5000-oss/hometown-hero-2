@@ -5,7 +5,7 @@
 // "⚡ 콘텐츠별 어빌리티 프리셋 자동 적용(도전하는 순간 전환, 끝나면 원래 프리셋으로)" 구조를 그대로 옮겼다.
 // [하위 호환] players.ability_lines / ability_locked_indices는 계속 "지금 활성 프리셋"의 거울로
 // 유지한다 — 기존 코드가 그 두 컬럼을 그대로 읽어도 활성 프리셋 값이 나오게.
-import { DEFAULT_FORMATION, FORMATIONS, TEAM_SIZE } from "./formation.js";
+import { DEFAULT_FORMATION, FORMATIONS, TEAM_SIZE, okTeam } from "./formation.js";
 import { ODYSSEY_THEMES } from "./odyssey.js";
 
 export const PRESET_SLOTS = 3;
@@ -62,7 +62,7 @@ export function normalizeTeamPresets(raw) {
   return Array.from({ length: PRESET_SLOTS }, (_, i) => normalizeTeam(arr[i]));
 }
 export function validateTeamIds(ids) {
-  if (!Array.isArray(ids) || ids.length !== TEAM_SIZE) throw new Error(`팀은 정확히 ${TEAM_SIZE}명이어야 함`);
+  if (!Array.isArray(ids) || !okTeam(ids)) throw new Error(`팀은 1~${TEAM_SIZE}명이어야 함`);
   if (new Set(ids).size !== ids.length) throw new Error("같은 캐릭터를 두 번 넣을 수 없음");
   return ids;
 }

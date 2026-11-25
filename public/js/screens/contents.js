@@ -46,7 +46,7 @@ export async function render(page) {
 }
 
 function dungeonTeam(raw) {
-  const t = raw && raw.team?.length === 5 ? raw : { team: S.me.farm.team, formation: S.me.farm.formation };
+  const t = raw && raw.team?.length > 0 ? raw : { team: S.me.farm.team, formation: S.me.farm.formation };
   return t;
 }
 

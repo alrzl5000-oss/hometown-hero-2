@@ -31,7 +31,7 @@ import { simulateBattle } from "./lib/combat.js";
 import {
   stageInfo, computeFarmTick, resolveBossChallenge, resolveRetreat,
 } from "./data/farming.js";
-import { assignFormation, FORMATIONS, TEAM_SIZE, DEFAULT_FORMATION } from "./data/formation.js";
+import { assignFormation, FORMATIONS, TEAM_SIZE, DEFAULT_FORMATION, okTeam } from "./data/formation.js";
 import { DUNGEON_TYPES, dungeonEnemy, dungeonReward, dungeonTip, DUNGEON_MAX_ATTEMPTS, DUNGEON_MAX_STAGE, resolveDungeonAttempt } from "./data/dailyDungeon.js";
 import { BOSS_MAX_ATTEMPTS, BOSS_FIGHT_SECONDS, dailyBossEnemy, dayIndex, resolveDailyBossAttempt } from "./data/dailyBoss.js";
 import {
@@ -88,8 +88,8 @@ function normalizeOwnedRows(ownedCharacters) {
 // 함께 적용된다. 파밍/PvP처럼 DB를 아는 경로는 서버가 직접 채워 넣고, 던전/보스/오디세이처럼
 // 무상태 경로는 어빌리티와 같은 방식으로 클라이언트가 함께 보낸다(생략 시 기존과 동일).
 function buildFormedTeam(team, formationKey, { abilityLines, accountLevel, odysseyItems, ownedCharacters, petPack } = {}) {
-  if (!Array.isArray(team) || team.length !== TEAM_SIZE) {
-    throw new Error(`팀은 정확히 ${TEAM_SIZE}명이어야 함(받은 수: ${Array.isArray(team) ? team.length : 0})`);
+  if (!Array.isArray(team) || !okTeam(team)) {
+    throw new Error(`팀은 1~${TEAM_SIZE}명이어야 함(받은 수: ${Array.isArray(team) ? team.length : 0})`);
   }
   if (formationKey && !FORMATIONS[formationKey]) {
     throw new Error(`알 수 없는 포메이션: ${formationKey} (가능: ${Object.keys(FORMATIONS).join(", ")})`);
@@ -415,8 +415,8 @@ app.post("/api/players/:playerId/abilities/lock", async (req, res) => {
 // "근간인 스테이지" 재설계의 핵심).
 // ---------------------------------------------------------------------------
 function requireFarmTeamSize(ids) {
-  if (!Array.isArray(ids) || ids.length !== TEAM_SIZE) {
-    throw new Error(`파밍 팀은 정확히 ${TEAM_SIZE}명이어야 함(받은 수: ${Array.isArray(ids) ? ids.length : 0})`);
+  if (!Array.isArray(ids) || !okTeam(ids)) {
+    throw new Error(`파밍 팀은 1~${TEAM_SIZE}명이어야 함(받은 수: ${Array.isArray(ids) ? ids.length : 0})`);
   }
 }
 
@@ -445,7 +445,7 @@ async function settleFarm(playerId, player, currency) {
   const farmTeamIds = player.farm_team || [];
   let team = null;
   let rewardMult = { goldMult: 1, expMult: 1, gemMult: 1 };
-  if (farmTeamIds.length === TEAM_SIZE) {
+  if (okTeam(farmTeamIds)) {
     // EX 별(fetchOwnedCharacterStats가 exStar 포함) + 컬렉션/시너지(보유 전체 목록)까지
     // buildFormedTeam 한 곳에서 적용 — 다른 콘텐츠와 완전히 같은 경로.
     // 어빌리티는 "파밍" 콘텐츠 프리셋 매핑, 장비는 지금 활성 장비 프리셋(server/features.js).
@@ -1110,7 +1110,7 @@ app.post("/api/auth/reset", requireAuth, async (req, res) => {
       pvp_rating: PVP_RATING_START, pvp_wins: 0, pvp_losses: 0, pvp_draws: 0, pvp_attempts: PVP_MAX_ATTEMPTS, pvp_last_regen_at: nowIso,
       pvp_defense_team: [], pvp_defense_formation: "balanced", pvp_attack_team: [], pvp_attack_formation: "balanced",
     }).eq("id", playerId),
-    supabase.from("player_currencies").update({ gold: 10000, dia: 500, stone: 0, discarded_shards: {}, updated_at: nowIso }).eq("player_id", playerId),
+    supabase.from("player_currencies").update({ gold: 10000, dia: 3000, stone: 0, discarded_shards: {}, updated_at: nowIso }).eq("player_id", playerId),
   ]);
   res.json({ ok: true, playerId });
 });
@@ -1122,7 +1122,7 @@ app.post("/api/auth/reset", requireAuth, async (req, res) => {
 // 그대로) — 레이팅 변동은 랭크전에만 있다.
 // ---------------------------------------------------------------------------
 async function resolvePvpTeam(playerId, teamIds, formation, player) {
-  if (!Array.isArray(teamIds) || teamIds.length !== TEAM_SIZE) return null;
+  if (!Array.isArray(teamIds) || !okTeam(teamIds)) return null;
   const [owned, allOwnedRows, opts] = await Promise.all([
     fetchOwnedCharacterStats(playerId, teamIds),
     fetchAllOwnedRows(playerId),
@@ -1217,7 +1217,7 @@ app.get("/api/players/:playerId/pvp/targets", async (req, res) => {
     .limit(200);
   if (error) return res.status(500).json({ error: error.message });
 
-  const withTeam = candidates.filter((c) => (c.pvp_defense_team && c.pvp_defense_team.length === TEAM_SIZE) || (c.farm_team && c.farm_team.length === TEAM_SIZE));
+  const withTeam = candidates.filter((c) => (c.pvp_defense_team && okTeam(c.pvp_defense_team)) || (c.farm_team && okTeam(c.farm_team)));
   const sorted = [...withTeam].sort((a, b) => Math.abs((a.pvp_rating ?? PVP_RATING_START) - myRating) - Math.abs((b.pvp_rating ?? PVP_RATING_START) - myRating)).slice(0, 50);
 
   const targets = await Promise.all(sorted.map(async (c) => {
@@ -1225,7 +1225,7 @@ app.get("/api/players/:playerId/pvp/targets", async (req, res) => {
     return {
       playerId: c.id, nickname: c.nickname || null, rating: c.pvp_rating ?? PVP_RATING_START, estimatedPower: team ? estimateTeamPower(team) : 0,
       maxStage: c.farm_max_stage || 1, wins: c.pvp_wins || 0, losses: c.pvp_losses || 0,
-      teamIds: (c.pvp_defense_team && c.pvp_defense_team.length === TEAM_SIZE ? c.pvp_defense_team : c.farm_team) || [],
+      teamIds: (c.pvp_defense_team && okTeam(c.pvp_defense_team) ? c.pvp_defense_team : c.farm_team) || [],
     };
   }));
   res.json({ targets });
@@ -1315,7 +1315,7 @@ app.post("/api/players/:playerId/pvp/random-match", async (req, res) => {
   const { data: candidates, error } = await supabase
     .from("players").select("id, pvp_rating, pvp_defense_team, farm_team").neq("id", playerId).limit(200);
   if (error) return res.status(500).json({ error: error.message });
-  const withTeam = candidates.filter((c) => (c.pvp_defense_team && c.pvp_defense_team.length === TEAM_SIZE) || (c.farm_team && c.farm_team.length === TEAM_SIZE));
+  const withTeam = candidates.filter((c) => (c.pvp_defense_team && okTeam(c.pvp_defense_team)) || (c.farm_team && okTeam(c.farm_team)));
   const opponent = pickRandomOpponent(withTeam, me.pvp_rating ?? PVP_RATING_START);
   if (!opponent) return res.status(400).json({ error: "매칭 가능한 상대가 없음" });
 

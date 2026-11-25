@@ -85,7 +85,10 @@ t("콘텐츠 매핑 검증", () => {
 t("슬롯/팀 검증", () => {
   assert.equal(assertSlot("2"), 2);
   assert.throws(() => assertSlot(3));
-  assert.throws(() => validateTeamIds(["a", "b"]));
+  validateTeamIds(["a"]); // 초반엔 1명부터 편성 가능
+  validateTeamIds(["a", "b"]);
+  assert.throws(() => validateTeamIds([]));
+  assert.throws(() => validateTeamIds(["a", "b", "c", "d", "e", "f"]));
   assert.throws(() => validateTeamIds(["a", "a", "b", "c", "d"]));
   validateTeamIds(["a", "b", "c", "d", "e"]);
   const tp = normalizeTeamPresets([{ team: ["x"], formation: "offensive" }, { formation: "bogus" }]);

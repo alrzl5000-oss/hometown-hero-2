@@ -25,7 +25,7 @@ import { DAILY_BOSS_SKILL_POOL } from "./data/dailyBoss.js";
 import { DUNGEON_WEAK_ROLE, DUNGEON_WEAK_ROLE_BONUS_MULT } from "./data/dailyDungeon.js";
 import { PVP_MAX_ATTEMPTS, PVP_RATING_START } from "./data/pvp.js";
 import { SKILL_KINDS } from "./data/skills.js";
-import { FORMATIONS, DEFAULT_FORMATION, TEAM_SIZE } from "./data/formation.js";
+import { FORMATIONS, DEFAULT_FORMATION, TEAM_SIZE, okTeam } from "./data/formation.js";
 import { applyExp, levelAtkBonusMult } from "./data/accountLevel.js";
 import { abilityBonuses } from "./data/abilities.js";
 import { computeCollectionBonus, computeSynergyState } from "./data/synergy.js";
@@ -448,8 +448,8 @@ export function registerFeatureRoutes(app, ctx) {
     for (let i = 0; i < count && attempts > 0; i++) {
       const theme = themeForStage(stage);
       const preset = presets[theme.key];
-      if (preset.team.length !== TEAM_SIZE) {
-        if (!fights.length) throw new Error(`${theme.name} 팀이 아직 없음 — POST /odyssey/theme-team 으로 ${CLASSES[theme.allowedClass].label} 5명을 먼저 편성`);
+      if (!okTeam(preset.team)) {
+        if (!fights.length) throw new Error(`${theme.name} 팀이 아직 없음 — POST /odyssey/theme-team 으로 ${CLASSES[theme.allowedClass].label}을 1명 이상 먼저 편성`);
         break;
       }
       if (!teamCache.has(theme.key)) {
@@ -504,8 +504,8 @@ export function registerFeatureRoutes(app, ctx) {
   // 5. 일일던전 — 서버 저장(매일 09:00 KST 도전 횟수 초기화, 스테이지 기록 유지)
   // =========================================================================
   async function resolveContentTeam(player, explicit) {
-    const t = explicit && Array.isArray(explicit.team) && explicit.team.length === TEAM_SIZE ? explicit : { team: player.farm_team || [], formation: player.farm_formation };
-    if ((t.team || []).length !== TEAM_SIZE) throw new Error("편성된 팀이 없음 — 던전 팀 또는 파밍 팀을 먼저 5명 편성");
+    const t = explicit && Array.isArray(explicit.team) && okTeam(explicit.team) ? explicit : { team: player.farm_team || [], formation: player.farm_formation };
+    if (!okTeam((t.team || []))) throw new Error("편성된 팀이 없음 — 던전 팀 또는 파밍 팀을 먼저 편성");
     return t;
   }
 
@@ -781,7 +781,7 @@ export function registerFeatureRoutes(app, ctx) {
     for (const d of del) if (d.error) throw new Error(d.error.message);
     const stamp = now();
     await updatePlayer(player.id, { ...RESET_PLAYER, farm_last_tick_at: stamp, odyssey_last_regen_at: stamp, pvp_last_regen_at: stamp });
-    await updateCurrency(player.id, { gold: 10000, dia: 500, stone: 0, dust: 0, discarded_shards: {} });
+    await updateCurrency(player.id, { gold: 10000, dia: 3000, stone: 0, dust: 0, discarded_shards: {} });
     res.json({ ok: true });
   }));
 

@@ -18,7 +18,9 @@ export const FORMATIONS = {
   defensive: { label: "철벽진", desc: "앞열 3 / 중열 1 / 뒷열 1 — 오래 버티지만 화력이 낮음", front: 3, mid: 1, back: 1 },
 };
 export const DEFAULT_FORMATION = "balanced";
-export const TEAM_SIZE = 5;
+export const TEAM_SIZE = 5; // 최대 인원
+export const MIN_TEAM_SIZE = 1; // 초반엔 영웅이 적으니 1명부터 편성 가능(빈 자리는 비워 둔 채로 싸움)
+export const okTeam = (ids) => Array.isArray(ids) && ids.length >= MIN_TEAM_SIZE && ids.length <= TEAM_SIZE;
 
 // teamOrdered: 편성 순서대로 정렬된 5인 배열(characterStatsAt 결과 또는 그와 동등한
 // {atk, def, ...} 객체). 각 원소에 row("front"/"mid"/"back")를 붙이고, 그 열의 보너스를

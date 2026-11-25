@@ -57,13 +57,13 @@ export async function render(page) {
         <div class="hud glass" style="left:14px;top:14px;padding:8px 12px;"><div class="row2"><span class="num" style="font-size:20px;">STAGE ${st}</span><span class="t2 small">${esc(tierName(st))} · 파밍 중</span></div><div class="t3 xs" style="margin-top:3px;">최고 기록 ${max}층 · 잡몹 ${info.fieldSpecies.length}종 혼합 출현</div></div>
         <div class="hud glass" style="right:14px;top:14px;padding:8px 12px;text-align:right;"><div class="t3 xs">누적 처치</div><div><span class="num" id="kills" style="font-size:22px;">${comma(farm.totalKills)}</span> <span class="t2 small">마리</span></div></div>
         <button class="hud chip" data-buffs style="right:14px;bottom:14px;background:rgba(6,16,13,.7);color:var(--t1);">${ic("spark", 13)} 받는 버프 보기</button>
-        ${team.length < 5 ? `<div class="hud" style="inset:0;display:flex;align-items:center;justify-content:center;background:rgba(6,16,13,.55);"><div class="glass" style="padding:18px 22px;text-align:center;"><div class="h3">파밍 팀이 아직 없어요</div><div class="t2 small" style="margin:6px 0 12px;">영웅 5명을 편성하면 자동으로 사냥을 시작해요.</div><button class="btn pri" data-edit>${ic("users", 15)} 팀 편성</button></div></div>` : ""}
+        ${team.length < 1 ? `<div class="hud" style="inset:0;display:flex;align-items:center;justify-content:center;background:rgba(6,16,13,.55);"><div class="glass" style="padding:18px 22px;text-align:center;"><div class="h3">파밍 팀이 아직 없어요</div><div class="t2 small" style="margin:6px 0 12px;">영웅을 1명 이상 편성하면 자동으로 사냥을 시작해요.</div><button class="btn pri" data-edit>${ic("users", 15)} 팀 편성</button></div></div>` : ""}
       </div>
       <div class="notice">${ic("gift", 13)} 지금 스테이지 잡몹 1마리당 골드 ${fmt(info.fieldSpecies[0].goldPerKill)}~ · 경험치 ${fmt(info.fieldSpecies[0].expPerKill)}~ · 다이아는 처치당 20% 확률 · <b>개척자 세트 장비</b>는 1마리당 ${pctTxt(dropAt("field", st))} (스테이지가 높을수록 ↑).</div>
 
       <div class="card pad col">
         <div class="sec"><div><div class="h2">내 파밍 팀</div><div class="t3 small">${team.length}명 · 팀 예상 DPS <span class="mint">${comma(teamDps)}</span></div></div>
-          <div class="row2"><button class="btn sm" data-edit>${ic("users", 14)} 팀 편성</button><button class="btn sm pri" data-boss ${team.length < 5 ? "disabled" : ""}>${ic("crown", 14)} 보스전</button></div></div>
+          <div class="row2"><button class="btn sm" data-edit>${ic("users", 14)} 팀 편성</button><button class="btn sm pri" data-boss ${team.length < 1 ? "disabled" : ""}>${ic("crown", 14)} 보스전</button></div></div>
         <div class="g5">${[0, 1, 2, 3, 4].map((i) => {
           const h = team[i];
           if (!h) return `<button class="well slot" data-edit style="min-height:150px;border:none;cursor:pointer;">${ic("plus", 18)}</button>`;
@@ -111,7 +111,7 @@ export async function render(page) {
           <span class="chip pos">${el(Object.keys(BEATS).find((k) => BEATS[k] === bossSp.element), 12, true)} 영웅 피해 ×1.25</span>
           <span class="chip bad">${el(BEATS[bossSp.element], 12, true)} 영웅 ×0.85</span></div>
         <div class="t3 small">내 팀 상성: 유리 <b class="mint">${good}명</b> · 불리 <b class="red">${bad}명</b></div>
-        <button class="btn pri lg block" data-boss ${team.length < 5 ? "disabled" : ""}>${ic("crown", 18)} 보스 도전</button>
+        <button class="btn pri lg block" data-boss ${team.length < 1 ? "disabled" : ""}>${ic("crown", 18)} 보스 도전</button>
       </div>
       <div class="card pad col">
         <div class="sec"><span class="h3">최근 1분 파밍 현황</span><button class="btn xs ghost" data-reset>${ic("refresh", 12)} 다시 측정</button></div>
@@ -135,7 +135,7 @@ export async function render(page) {
     if (cur && bl) bl.scrollLeft = cur.offsetLeft - bl.clientWidth / 2 + cur.clientWidth / 2;
     scene = page.querySelector("#scene");
     if (idle) idle.stop();
-    if (team.length === 5) idle = idleFarm(scene, { heroes: team.map((h) => ({ id: h.characterId })), formation: S.meta.formations[farm.farmFormation], species: info.fieldSpecies, dps: Math.max(1, teamDps / 5), pets: S.me.petSlots || [] });
+    if (team.length > 0) idle = idleFarm(scene, { heroes: team.map((h) => ({ id: h.characterId })), formation: S.meta.formations[farm.farmFormation], species: info.fieldSpecies, dps: Math.max(1, teamDps / team.length), pets: S.me.petSlots || [] });
   }
 
   async function presetsInfo() {
@@ -165,7 +165,7 @@ export async function render(page) {
     else if (t.dataset.buffs !== undefined) openBuffs("farm");
     else if (t.dataset.reset !== undefined) { recent.length = 0; firstGain = null; draw(); markPreset(); }
     else if (t.dataset.form) {
-      if (teamHeroes().length < 5) return toast("먼저 팀 5명을 편성해 주세요.", "err");
+      if (teamHeroes().length < 1) return toast("먼저 팀을 편성해 주세요.", "err");
       busy(t, () => saveTeam(farm.farmTeam, t.dataset.form));
     } else if (t.dataset.fp) {
       busy(t, async () => {

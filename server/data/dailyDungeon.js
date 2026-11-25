@@ -69,7 +69,8 @@ const DUNGEON_TIPS = {
   exp: `💡 경험치 던전 보스는 ${WEAK_ROLE_LABEL.support}에게 약해요(피해 ×${DUNGEON_WEAK_ROLE_BONUS_MULT}). 레벨업이 더디게 느껴질 때 서포터를 섞어 밀어붙여 보세요.`,
 };
 
-const BASE_REWARD = { gold: 80, gem: 8, exp: 60 };
+// 1.0 goldDungeonReward/gemDungeonReward/expDungeonReward 그대로 (× 1.11^(층-1))
+const BASE_REWARD = { gold: 12000, gem: 90, exp: 40 };
 
 export function dungeonEnemy(type, stage) {
   const unit = dungeonUnit(stage);

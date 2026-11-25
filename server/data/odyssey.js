@@ -431,8 +431,8 @@ export function applyEnemyDefBreak(enemy, defBreakPct) {
 // ---------------------------------------------------------------------------
 export const ODYSSEY_FIRST_CLEAR_GEM_BASE = 300;
 export const ODYSSEY_FIRST_CLEAR_GEM_STEP = 100;
-export const ODYSSEY_FIRST_CLEAR_GOLD_BASE = 60000; // [1차 추정치] 2.0 경제 스케일 반영
-export const ODYSSEY_FIRST_CLEAR_GOLD_STEP = 20000;
+export const ODYSSEY_FIRST_CLEAR_GOLD_BASE = 3000; // 1.0 그대로
+export const ODYSSEY_FIRST_CLEAR_GOLD_STEP = 1000;
 
 export function odysseyFirstClearReward(stage) {
   const cycle = cycleIndexForStage(stage);

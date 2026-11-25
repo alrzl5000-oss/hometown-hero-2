@@ -76,13 +76,15 @@ export function dailyBossEnemy(maxStageReached, dayIdx = dayIndex()) {
 
 // 데미지 비례 보상 — [1차 추정치, 실측 필요] 선형 비례(기존 게임 README의 "데미지에
 // 비례해 즉시 보상"을 그대로 따름). 다이아는 골드보다 1/10 스케일.
-const GOLD_PER_DAMAGE = 0.02;
-const GEM_PER_DAMAGE = 0.002;
-
+// 1.0 bossAttemptReward 그대로: 골드 = 데미지 ÷ 4, 다이아 = 데미지 ÷ 30.
+// 단 2.0 영웅 능력치는 1.0보다 RARITY_UNIT 기준 STAT_SCALE배 크게 잡혀 있어서(같은 영웅이
+// 같은 레벨일 때 데미지가 그만큼 큼) 데미지를 1.0 기준으로 환산한 뒤 1.0 공식을 적용한다.
+export const BOSS_DAMAGE_STAT_SCALE = RARITY_UNIT.N / 20; // 1.0 RARITY_UNIT.N = 20
 export function bossAttemptReward(damageDealt) {
+  const dmg1 = damageDealt / BOSS_DAMAGE_STAT_SCALE;
   return {
-    gold: Math.round(damageDealt * GOLD_PER_DAMAGE),
-    gems: Math.round(damageDealt * GEM_PER_DAMAGE),
+    gold: Math.floor(dmg1 / 4),
+    gems: Math.floor(dmg1 / 30),
   };
 }
 

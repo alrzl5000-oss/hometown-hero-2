@@ -102,7 +102,7 @@ export const FARM_REWARD_STAGE_BONUS = 1.02;
 // 팀이 아무리 세도 처치당 보상 계산에 쓰는 처치시간에는 최소 하한을 둔다(1.0의
 // MIN_FARM_TIME_TO_KILL 원칙 그대로) — 안 그러면 초당 수익이 팀 DPS에 비례해 무한정
 // 커질 수 있다.
-export const MIN_FARM_SECONDS_PER_KILL = 1.5;
+export const MIN_FARM_SECONDS_PER_KILL = 2; // 1.0 MIN_FARM_TIME_TO_KILL = 2 그대로
 
 // 오프라인(미접속) 보상 최대 상한 — 1.0의 OFFLINE_CAP_SECONDS(8시간) 그대로.
 export const FARM_OFFLINE_CAP_SECONDS = 8 * 60 * 60;
@@ -115,7 +115,8 @@ function farmRewardCurve(baseAtStage1, stageNumber, toughnessRatio) {
 }
 
 // [1차 추정치 — 실측 필요] 스테이지 1, 기준 종(ratio=1.0) 기준 처치당 골드.
-const GOLD_BASE_AT_STAGE1 = 3;
+// 1.0 stageGoldPerKill 그대로: 7.3249906571478105 × FARM_REWARD_NERF_MULT(0.4)
+const GOLD_BASE_AT_STAGE1 = 7.3249906571478105 * 0.4;
 export function fieldGoldPerKill(stageNumber, toughnessRatio = 1) {
   return Math.max(1, Math.round(farmRewardCurve(GOLD_BASE_AT_STAGE1, stageNumber, toughnessRatio)));
 }
@@ -132,7 +133,8 @@ export function fieldExpPerKill(stageNumber, toughnessRatio = 1) {
 // 다이아 드랍 — 확률은 스테이지/종과 무관하게 고정(1.0과 동일한 설계: "성장은 드랍량이
 // 아니라 드랍 '확률'이 아니라 드랍 '양'에서 처리"), 터졌을 때 받는 양만 toughness에 비례.
 export const GEM_DROP_CHANCE = 0.2;
-const GEM_UNIT_BASE_AT_STAGE1 = 0.4;
+// 1.0 stageGemDropUnit 그대로: 0.06849852999579727 × 0.4 (드랍 확률 20%도 1.0 그대로)
+const GEM_UNIT_BASE_AT_STAGE1 = 0.06849852999579727 * 0.4;
 export function fieldGemDropUnit(stageNumber, toughnessRatio = 1) {
   return Math.max(1, Math.round(farmRewardCurve(GEM_UNIT_BASE_AT_STAGE1, stageNumber, toughnessRatio)));
 }
@@ -285,8 +287,8 @@ export function makeBossMonster(stageNumber) {
 
 // 새 프론티어(최초 클리어) 보너스 — [1차 추정치, 실측 필요] 2.0 경제 스케일(기본 다이아
 // 500, 가챠 1회 300) 기준으로 모자라지도 과하지도 않게 잡은 값.
-export const STAGE_CLEAR_GEM_BONUS = 20;
-export const STAGE_MILESTONE_GEM_BONUS = 50; // 10스테이지마다 추가 지급
+export const STAGE_CLEAR_GEM_BONUS = 300; // 1.0 battle.js 그대로
+export const STAGE_MILESTONE_GEM_BONUS = 200; // 10의 배수 층은 추가(합 500) — 1.0 그대로
 
 export function resolveBossChallenge({ team, stage, maxStage, timeLimitSeconds }) {
   const boss = makeBossMonster(stage);

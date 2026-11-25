@@ -1279,7 +1279,7 @@ async function settlePvpMatch({ attackerId, defenderId, rated }) {
   }
 
   const goldReward = pvpGoldReward(attacker.farm_max_stage || 1, win, expected);
-  const diaReward = pvpDiaReward(win);
+  const diaReward = pvpDiaReward(win, expected);
   const { data: attackerCurrency } = await supabase.from("player_currencies").select("gold, dia").eq("player_id", attackerId).single();
   if (attackerCurrency) {
     await supabase.from("player_currencies").update({

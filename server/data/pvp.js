@@ -15,12 +15,8 @@
 //     (0.3배~2.0배), 다이아는 스테이지/레이팅과 거의 무관한 고정량(1.0 설계 그대로).
 //
 // [2.0에서 새로 정한 것 — 1.0에 없던 스케일 보정]
-//   - 1.0의 정확한 보상 상수(예: pvpBaseGold 테이블)는 get_page_text 50,000자 제한 너머라
-//     실측 못 함 — 대신 2.0 자체 경제 스케일(farming.js의 fieldGoldPerKill)에 비례시켜
-//     [1차 추정치, 실측 필요]로 설계했다. 이러면 파밍 진행도(farm_max_stage)가 올라갈수록
-//     PvP 보상도 자연히 함께 커진다.
+//   - 보상 상수는 2026-11-25에 1.0 원본(server/lib/pvp.js)을 직접 확인해 그대로 맞췄다.
 //   - 1.0은 공수 팀을 4인으로 제한했지만 2.0은 5인 팀제이므로 그 제한은 없앴다.
-import { fieldGoldPerKill } from "./farming.js";
 
 // ---------------------------------------------------------------------------
 // 1. Elo 레이팅
@@ -46,24 +42,28 @@ export function pvpRatingChange(ratingA, ratingB, winnerIsA) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. 보상 — [1차 추정치, 실측 필요] 2.0 파밍 경제 스케일(fieldGoldPerKill)에 비례.
+// 2. 보상 — 1.0(minsu100 server/lib/pvp.js) 값 그대로.
 // ---------------------------------------------------------------------------
-const PVP_GOLD_KILL_EQUIVALENT = 50; // "이 스테이지 처치 50회치" 정도의 골드를 기본 보상으로
+// 1.0 lib/pvp.js 그대로:
+//  - 골드: 300 × 1.09^(내 최고 스테이지-1) × 배율(2 − 2×기대승률, 0.3~2.0). 패배는 기본의 20%.
+//  - 다이아: 승리 1300 + (0.5 − 기대승률)×40 (1280~1320), 패배 260(1300의 20%).
+const PVP_REWARD_RATIO = 1.09;
 export const PVP_WIN_DIA_BASE = 1300;
 export const PVP_WIN_DIA_JITTER = 20;
-export const PVP_LOSS_DIA = 50; // 패배해도 소량의 위로 다이아
+const PVP_LOSS_REWARD_RATIO = 0.2;
+export const PVP_LOSS_DIA = Math.round(PVP_WIN_DIA_BASE * PVP_LOSS_REWARD_RATIO); // 260
+export const pvpBaseGold = (stage) => Math.round(300 * Math.pow(PVP_REWARD_RATIO, Math.max(1, stage || 1) - 1));
 
-export function pvpGoldReward(attackerMaxStage, win, expectedScoreForAttacker) {
-  const base = fieldGoldPerKill(Math.max(1, attackerMaxStage || 1)) * PVP_GOLD_KILL_EQUIVALENT;
-  if (!win) return Math.max(1, Math.round(base * 0.3));
-  // expectedScore가 낮을수록(이길 확률이 낮았을수록) 보상 배율이 커진다 — 0.3배~2.0배.
-  const underdogMult = 0.3 + (1 - expectedScoreForAttacker) * 1.7;
-  return Math.max(1, Math.round(base * Math.min(2.0, Math.max(0.3, underdogMult))));
+export function pvpGoldReward(attackerMaxStage, win, expectedScoreForAttacker = 0.5) {
+  const base = pvpBaseGold(attackerMaxStage);
+  if (!win) return Math.round(base * PVP_LOSS_REWARD_RATIO);
+  const mult = Math.max(0.3, Math.min(2.0, 2 - 2 * expectedScoreForAttacker));
+  return Math.round(base * mult);
 }
 
-export function pvpDiaReward(win) {
+export function pvpDiaReward(win, expectedScoreForAttacker = 0.5) {
   if (!win) return PVP_LOSS_DIA;
-  return PVP_WIN_DIA_BASE + Math.round((Math.random() * 2 - 1) * PVP_WIN_DIA_JITTER);
+  return PVP_WIN_DIA_BASE + Math.round((0.5 - expectedScoreForAttacker) * 2 * PVP_WIN_DIA_JITTER);
 }
 
 // ---------------------------------------------------------------------------
